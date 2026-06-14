@@ -684,6 +684,23 @@ function App() {
                                                               <p><strong>Адрес:</strong> {app.child_address || 'Нет'}</p>
                                                               <p><strong>Доп. инфо:</strong> {app.additional_info || 'Нет'}</p>
                                                           </div>
+                                                          {/* НОВЫЙ БЛОК: Просмотр документов менеджером */}
+                                                              <div style={{ marginTop: '15px', padding: '10px', backgroundColor: '#fff', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                                                                  <h5 style={{ margin: '0 0 10px 0', color: '#475569', fontSize: '14px' }}>📎 Прикрепленные документы:</h5>
+                                                                  {documents[app.child_id] && documents[app.child_id].length > 0 ? (
+                                                                      <ul style={{ listStyleType: 'none', padding: 0, margin: 0 }}>
+                                                                          {documents[app.child_id].map(doc => (
+                                                                              <li key={doc.document_id} style={{ margin_bottom: '5px', fontSize: '14px' }}>
+                                                                                  📄 <a href={`http://localhost:5000${doc.file_path}`} target="_blank" rel="noreferrer" style={{ color: 'var(--primary)', textDecoration: 'none', fontWeight: '600' }}>
+                                                                                      {doc.document_type}
+                                                                                  </a>
+                                                                              </li>
+                                                                          ))}
+                                                                      </ul>
+                                                                  ) : (
+                                                                      <p style={{ fontSize: '13px', color: '#94a3b8', margin: 0 }}>Документы не загружены</p>
+                                                                  )}
+                                                              </div>
                                                           <div style={{ flex: 1, minWidth: '250px' }}>
                                                               <h4 style={{ color: 'var(--primary)', borderBottom: '2px solid #e2e8f0', paddingBottom: '8px' }}>👨‍👩‍👦 Заявитель</h4>
                                                               <p><strong>ФИО:</strong> {app.parent_fio || <span style={{color: '#aaa'}}>Не заполнено</span>}</p>
