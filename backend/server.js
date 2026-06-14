@@ -352,17 +352,26 @@ app.delete('/api/documents/:id', auth, async (req, res) => {
 // 5. ЗАЯВКИ РОДИТЕЛЯ
 // ==========================================
 
-app.post('/api/applications', auth, async (req, res) => {
+// --- ПОДАЧА ЗАЯВКИ НА СМЕНУ (С ДИНАМИЧЕСКИМ РАСЧЕТОМ ЦЕНЫ) ---
+app.post('/api/applications', async (req, res) => {
     try {
         const { child_id, shift_id, season, accommodation_type, shift_number } = req.body;
+        
+        // Серверный расчет стоимости в зависимости от комфорта
+        let price = 35000; // Базовая цена для стандарта
+        if (accommodation_type === 'Корпус улучшенный') price = 45000;
+        if (accommodation_type === 'Глэмпинг') price = 55000;
+
         const newApp = await pool.query(
-            'INSERT INTO applications (child_id, shift_id, status_id, season, accommodation_type, shift_number) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *', 
-            [child_id, shift_id, 1, season, accommodation_type, shift_number]
+            `INSERT INTO applications 
+            (child_id, shift_id, season, accommodation_type, shift_number, price, status_id) 
+            VALUES ($1, $2, $3, $4, $5, $6, 1) RETURNING *`,
+            [child_id, shift_id, season, accommodation_type, shift_number, price]
         );
-        res.status(201).json({ application: newApp.rows[0] });
+        res.status(201).json({ message: 'Заявка успешно создана', application: newApp.rows[0] });
     } catch (err) {
         console.error('Ошибка подачи заявки:', err.message);
-        res.status(500).json({ error: 'Ошибка сервера' });
+        res.status(500).json({ error: 'Ошибка сервера при подаче заявки.' });
     }
 });
 
@@ -530,6 +539,27 @@ app.post('/api/payments', auth, async (req, res) => {
     } catch (err) {
         console.error('Ошибка при оплате:', err.message);
         res.status(500).json({ error: 'Ошибка сервера при обработке платежа' });
+    }
+});
+
+// --- ДОБАВЛЕНИЕ НОВОЙ СМЕНЫ МЕНЕДЖЕРОМ ---
+app.post('/api/admin/shifts', async (req, res) => {
+    try {
+        const { program_name, shift_code, start_date, end_date } = req.body;
+
+        if (!program_name || !shift_code || !start_date || !end_date) {
+            return res.status(400).json({ error: 'Пожалуйста, заполните все поля!' });
+        }
+
+        const result = await pool.query(
+            'INSERT INTO shifts (program_name, shift_code, start_date, end_date) VALUES ($1, $2, $3, $4) RETURNING *',
+            [program_name, shift_code, start_date, end_date]
+        );
+
+        res.status(201).json({ message: 'Смена успешно добавлена', shift: result.rows[0] });
+    } catch (err) {
+        console.error('Ошибка добавления смены:', err.message);
+        res.status(500).json({ error: 'Ошибка сервера при добавлении смены.' });
     }
 });
 

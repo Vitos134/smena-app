@@ -2,29 +2,19 @@ import React, { useState, useEffect } from 'react';
 import './App.css';
 
 function App() {
-  // ==========================================
-  // 1. БАЗОВЫЕ СОСТОЯНИЯ (АВТОРИЗАЦИЯ)
-  // ==========================================
   const [token, setToken] = useState(localStorage.getItem('token') || ''); 
   const [userRole, setUserRole] = useState(Number(localStorage.getItem('userRole')) || null);
   const [isRegisterMode, setIsRegisterMode] = useState(false);
   const [isResetMode, setIsResetMode] = useState(false);
-  
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [message, setMessage] = useState('');
   
-  // ==========================================
-  // 2. СОСТОЯНИЯ ПРОФИЛЯ РОДИТЕЛЯ
-  // ==========================================
   const [profile, setProfile] = useState({});
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [profileForm, setProfileForm] = useState({ fio: '', phone: '', address: '' });
   const [activeTab, setActiveTab] = useState('children');
 
-  // ==========================================
-  // 3. СОСТОЯНИЯ ДЛЯ РАБОТЫ С ДЕТЬМИ И ЗАЯВКАМИ
-  // ==========================================
   const [children, setChildren] = useState([]); 
   const [shifts, setShifts] = useState([]);
   const [selectedShifts, setSelectedShifts] = useState({});
@@ -47,9 +37,13 @@ function App() {
   const [editingChildId, setEditingChildId] = useState(null);
   const [editChildForm, setEditChildForm] = useState({});
 
-  // ==========================================
-  // 4. СОСТОЯНИЯ ПАНЕЛИ МЕНЕДЖЕРА
-  // ==========================================
+  // Новые состояния для добавления смен менеджером
+  const [showAddShiftForm, setShowAddShiftForm] = useState(false);
+  const [newProgramName, setNewProgramName] = useState('');
+  const [newShiftCode, setNewShiftCode] = useState('');
+  const [newShiftStartDate, setNewShiftStartDate] = useState('');
+  const [newShiftEndDate, setNewShiftEndDate] = useState('');
+
   const [adminApplications, setAdminApplications] = useState([]);
   const [expandedApp, setExpandedApp] = useState(null);
   const [rejectingAppId, setRejectingAppId] = useState(null);
@@ -68,7 +62,7 @@ function App() {
   const [showReport, setShowReport] = useState(false);
 
   // ==========================================
-  // 5. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ И МАСКИ
+  // ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ И МАСКИ
   // ==========================================
   const formatDate = (value) => {
     const digits = value.replace(/\D/g, ''); 
@@ -101,6 +95,24 @@ function App() {
     return formatted;
   };
 
+  const formatPhone = (value) => {
+    const digits = value.replace(/\D/g, '');
+    if (!digits) return '';
+    let formatted = '+7';
+    if (digits.length > 1) formatted += ' (' + digits.substring(1, 4);
+    if (digits.length > 4) formatted += ') ' + digits.substring(4, 7);
+    if (digits.length > 7) formatted += '-' + digits.substring(7, 9);
+    if (digits.length > 9) formatted += '-' + digits.substring(9, 11);
+    return formatted;
+  };
+
+  const getPriceForAccommodation = (type) => {
+    if (type === 'Корпус улучшенный') return 45000;
+    if (type === 'Глэмпинг') return 55000;
+    if (type === 'Корпус стандарт') return 35000;
+    return 0;
+  };
+
   const getBadgeColor = (statusName) => {
       if (!statusName) return '#fd7e14';
       const lowerName = statusName.trim().toLowerCase();
@@ -110,7 +122,7 @@ function App() {
   };
 
   // ==========================================
-  // 6. ФУНКЦИИ АВТОРИЗАЦИИ
+  // СВЯЗЬ С СЕРВЕРОМ
   // ==========================================
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -162,9 +174,6 @@ function App() {
     setToken(''); setUserRole(null); setChildren([]); setApplications([]); setAdminApplications([]); setPassword(''); setMessage('');
   };
 
-  // ==========================================
-  // 7. ЗАГРУЗКА ДАННЫХ
-  // ==========================================
   const fetchData = async () => {
     if (!token) return;
     if (userRole === 2) {
@@ -196,8 +205,34 @@ function App() {
 
   useEffect(() => { fetchData(); }, [token, userRole]);
 
+  // Функция отправки новой смены на сервер менеджером
+  const handleAddShiftSubmit = async (e) => {
+      e.preventDefault();
+      try {
+          const res = await fetch('http://localhost:5000/api/admin/shifts', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                  program_name: newProgramName,
+                  shift_code: newShiftCode,
+                  start_date: newShiftStartDate,
+                  end_date: newShiftEndDate
+              })
+          });
+          const data = await res.json();
+          if (res.ok) {
+              alert('Новая программа смены успешно добавлена в базу данных!');
+              setNewProgramName(''); setNewShiftCode(''); setNewShiftStartDate(''); setNewShiftEndDate('');
+              setShowAddShiftForm(false);
+              fetchData(); 
+          } else {
+              alert('Ошибка: ' + data.error);
+          }
+      } catch (err) { alert('Ошибка связи с сервером.'); }
+  };
+
   // ==========================================
-  // 8. РОДИТЕЛЬ: ПРОФИЛЬ И ДЕТИ
+  // РОДИТЕЛЬСКИЙ ФУНКЦИОНАЛ
   // ==========================================
   const handleUpdateProfile = async (e) => {
       e.preventDefault();
@@ -212,7 +247,6 @@ function App() {
   const handleAddChild = async (e) => {
     e.preventDefault();
     const cleanSnils = newSnils.replace(/\D/g, ''); const cleanOms = newOms.replace(/\D/g, '');
-    
     if (cleanSnils.length !== 11) return setFormError('СНИЛС должен содержать 11 цифр!');
     if (cleanOms.length !== 16) return setFormError('ОМС должен содержать 16 цифр!');
     if (newBirthDate.length !== 10) return setFormError('Дата рождения должна быть в формате ДД.ММ.ГГГГ');
@@ -342,9 +376,6 @@ function App() {
       } catch (err) { alert('Ошибка связи с сервером.'); }
   };
 
-  // ==========================================
-  // 9. ОПЛАТА ПУТЕВКИ
-  // ==========================================
   const handleProcessPayment = async (e) => {
       e.preventDefault();
       const cleanCard = cardNumber.replace(/\D/g, '');
@@ -367,7 +398,7 @@ function App() {
   };
 
   // ==========================================
-  // 10. МЕНЕДЖЕР: УПРАВЛЕНИЕ СТАТУСАМИ
+  // МЕНЕДЖЕРСКИЙ ФУНКЦИОНАЛ
   // ==========================================
   const handleStatusChange = async (appId, newStatusId, reason = '') => {
       try {
@@ -393,9 +424,6 @@ function App() {
       } catch (err) { alert('Ошибка связи с сервером.'); }
   };
 
-  // ==========================================
-  // 11. ФИЛЬТРЫ И ЭКСПОРТ
-  // ==========================================
   const uniqueShifts = Array.from(new Set(adminApplications.map(app => app.shift_code))).filter(Boolean);
 
   const filteredAdminApps = adminApplications.filter(app => {
@@ -429,10 +457,6 @@ function App() {
       link.click();
       document.body.removeChild(link);
   };
-
-  // ==========================================
-  // ВИЗУАЛЬНАЯ ЧАСТЬ (ОТРИСОВКА ИНТЕРФЕЙСА)
-  // ==========================================
 
   // --- ЭКРАН 1: АВТОРИЗАЦИЯ И РЕГИСТРАЦИЯ ---
   if (!token) {
@@ -536,16 +560,48 @@ function App() {
                   </div>
               </div>
 
+              {/* НОВАЯ КАРТОЧКА: УПРАВЛЕНИЕ ПРОГРАММАМИ СМЕН */}
+              <div className="card">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '15px' }}>
+                      <h2 style={{ margin: 0 }}>🌲 Управление программами смен</h2>
+                      <button className="btn btn-primary" onClick={() => setShowAddShiftForm(!showAddShiftForm)}>
+                          {showAddShiftForm ? 'Скрыть форму' : '+ Создать программу смены'}
+                      </button>
+                  </div>
+
+                  {showAddShiftForm && (
+                      <div style={{ marginTop: '20px', padding: '20px', backgroundColor: '#f8fafc', border: '1.5px solid var(--primary)', borderRadius: '12px' }}>
+                          <form onSubmit={handleAddShiftSubmit}>
+                              <div className="form-row">
+                                  <input className="form-input" type="text" placeholder="Название программы (например: Космическая одиссея)" value={newProgramName} onChange={(e) => setNewProgramName(e.target.value)} required />
+                                  <input className="form-input" type="text" placeholder="Код/Номер смены (например: СМ-1)" value={newShiftCode} onChange={(e) => setNewShiftCode(e.target.value)} required />
+                              </div>
+                              <div className="form-row">
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                                      <label style={{ fontSize: '13px', color: 'var(--text-muted)', fontWeight: 'bold' }}>Дата начала смены:</label>
+                                      <input className="form-input" type="date" value={newShiftStartDate} onChange={(e) => setNewShiftStartDate(e.target.value)} required />
+                                  </div>
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                                      <label style={{ fontSize: '13px', color: 'var(--text-muted)', fontWeight: 'bold' }}>Дата окончания смены:</label>
+                                      <input className="form-input" type="date" value={newShiftEndDate} onChange={(e) => setNewShiftEndDate(e.target.value)} required />
+                                  </div>
+                              </div>
+                              <button type="submit" className="btn btn-success" style={{ width: '100%', padding: '12px' }}>Сохранить и запустить в систему</button>
+                          </form>
+                      </div>
+                  )}
+              </div>
+
               <div className="card">
                   <div className="tab-header">
                       <h2 style={{ margin: 0, textAlign: 'left' }}>База данных заявок</h2>
                       <div className="filters-container">
-                          <input className="form-input" style={{ width: 'auto', marginBottom: 0 }} type="text" placeholder="🔍 Поиск по ФИО..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
-                          <select className="form-input" style={{ width: 'auto', marginBottom: 0, cursor: 'pointer' }} value={shiftFilter} onChange={(e) => setShiftFilter(e.target.value)}>
+                          <input className="form-input" style={{ marginBottom: 0 }} type="text" placeholder="🔍 Поиск по ФИО..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+                          <select className="form-input" style={{ marginBottom: 0 }} value={shiftFilter} onChange={(e) => setShiftFilter(e.target.value)}>
                               <option value="">Все смены</option>
                               {uniqueShifts.map(sc => <option key={sc} value={sc}>{sc}</option>)}
                           </select>
-                          <select className="form-input" style={{ width: 'auto', marginBottom: 0, cursor: 'pointer' }} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+                          <select className="form-input" style={{ marginBottom: 0 }} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
                               <option value="">Все статусы</option>
                               <option value="В работе">В работе</option>
                               <option value="Одобрена">Одобрена</option>
@@ -558,7 +614,7 @@ function App() {
                   </div>
 
                   {filteredAdminApps.length === 0 ? ( 
-                      <p style={{ textAlign: 'center', color: '#666', padding: '20px' }}>По вашему запросу ничего не найдено.</p> 
+                      <p style={{ textalign: 'center', color: '#666', padding: '20px' }}>По вашему запросу ничего не найдено.</p> 
                   ) : (
                       <div className="table-container">
                           <table className="modern-table">
@@ -567,15 +623,15 @@ function App() {
                                       <th style={{ width: '5%' }}>№</th>
                                       <th>ФИО Ребенка</th>
                                       <th>Инфо о путевке</th>
-                                      <th style={{ textAlign: 'center' }}>Статус</th>
-                                      <th style={{ textAlign: 'center' }}>Действия</th>
+                                      <th style={{ textalign: 'center' }}>Статус</th>
+                                      <th style={{ textalign: 'center' }}>Действия</th>
                                   </tr>
                               </thead>
                               <tbody>
                                   {filteredAdminApps.map((app) => (
                                       <React.Fragment key={app.app_id}>
                                           <tr style={{ backgroundColor: app.is_blacklisted ? '#fff3f3' : 'transparent' }}>
-                                              <td style={{ textAlign: 'center', fontWeight: 'bold', color: '#666' }}>{app.app_id}</td>
+                                              <td style={{ textalign: 'center', fontWeight: 'bold', color: '#666' }}>{app.app_id}</td>
                                               <td>
                                                   <strong>{app.child_fio}</strong>
                                                   {app.is_blacklisted && <span style={{ color: 'var(--danger)', fontSize: '12px', display: 'block' }}>[ЧС] {app.blacklist_reason}</span>}
@@ -584,11 +640,11 @@ function App() {
                                                   <div>{app.shift_code}</div>
                                                   {app.season && <div style={{ fontSize: '12px', color: '#666' }}>{app.season}, {app.accommodation_type}, сч. №{app.shift_number}</div>}
                                               </td>
-                                              <td style={{ textAlign: 'center' }}>
+                                              <td style={{ textalign: 'center' }}>
                                                   <span className="badge" style={{ backgroundColor: getBadgeColor(app.status_name) }}>{app.status_name}</span>
                                                   {app.status_name?.toLowerCase().includes('отклон') && app.rejection_reason && <div style={{ fontSize: '12px', color: 'var(--danger)', marginTop: '5px' }}>Отказ: {app.rejection_reason}</div>}
                                               </td>
-                                              <td style={{ textAlign: 'center' }}>
+                                              <td style={{ textalign: 'center' }}>
                                                   {rejectingAppId === app.app_id ? (
                                                       <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
                                                           <input className="form-input" style={{ padding: '6px', marginBottom: '0' }} type="text" placeholder="Причина отказа" value={rejectionReasonText} onChange={(e) => setRejectionReasonText(e.target.value)} />
@@ -646,13 +702,13 @@ function App() {
                                                               </div>
                                                           )}
                                                       </div>
-                                                      <div style={{ textAlign: 'right', marginTop: '15px' }}>
+                                                      <div style={{ textalign: 'right', marginTop: '15px' }}>
                                                           {app.is_blacklisted ? (
                                                               <button className="btn btn-sm btn-secondary" onClick={() => handleToggleBlacklist(app.child_id, app.is_blacklisted)}>⚖️ Убрать из ЧС</button>
                                                           ) : (
                                                               blacklistingChildId === app.child_id ? (
-                                                                  <div style={{ display: 'inline-flex', gap: '5px' }}>
-                                                                      <input className="form-input" style={{ width: '200px', padding: '6px', marginBottom: 0 }} type="text" placeholder="Причина ЧС" value={blacklistReasonText} onChange={(e) => setBlacklistReasonText(e.target.value)} />
+                                                                  <div className="action-buttons" style={{ justifyContent: 'flex-end' }}>
+                                                                      <input className="form-input" style={{ width: '100%', maxWidth: '200px', padding: '6px', marginBottom: 0 }} type="text" placeholder="Причина ЧС" value={blacklistReasonText} onChange={(e) => setBlacklistReasonText(e.target.value)} />
                                                                       <button className="btn btn-sm btn-danger" onClick={() => handleToggleBlacklist(app.child_id, false, blacklistReasonText)}>В ЧС</button>
                                                                       <button className="btn btn-sm btn-secondary" onClick={() => setBlacklistingChildId(null)}>Отмена</button>
                                                                   </div>
@@ -677,7 +733,7 @@ function App() {
 
   // --- ЭКРАН 3: ЛИЧНЫЙ КАБИНЕТ РОДИТЕЛЯ ---
   return (
-    <div className="dashboard-container parent-container" style={{ width: '100%', margin: '0 auto', boxSizing: 'border-box' }}>
+    <div className="dashboard-container parent-container">
       <div className="header-bar">
         <h1 style={{ color: '#000' }}>Личный кабинет Родителя</h1>
         <button className="btn btn-secondary" onClick={handleLogout}>Выйти</button>
@@ -721,12 +777,11 @@ function App() {
           </button>
       </div>
 
-      <div className="card" style={{ width: '100%', boxSizing: 'border-box' }}>
+      <div className="card">
           
           {/* СОДЕРЖИМОЕ ВКЛАДКИ: ПРОФИЛЬ */}
           {activeTab === 'profile' && (
-              <div style={{ width: '100%', boxSizing: 'border-box' }}>
-                
+              <div>
                 <div className="tab-header">
                     <div className="spacer"></div>
                     <h2>Мой профиль</h2>
@@ -738,12 +793,12 @@ function App() {
                 </div>
 
                 {isEditingProfile ? (
-                    <form onSubmit={handleUpdateProfile} style={{ width: '100%' }}>
+                    <form onSubmit={handleUpdateProfile}>
                         <div className="form-row">
                             <input className="form-input" type="text" placeholder="ФИО полностью" value={profileForm.fio} onChange={(e) => setProfileForm({...profileForm, fio: e.target.value})} required />
-                            <input className="form-input" type="text" placeholder="Номер телефона" value={profileForm.phone} onChange={(e) => setProfileForm({...profileForm, phone: e.target.value})} required />
+                            <input className="form-input" type="text" placeholder="Номер телефона" maxLength="18" value={profileForm.phone} onChange={(e) => setProfileForm({...profileForm, phone: formatPhone(e.target.value)})} required />
                         </div>
-                        <textarea className="form-input" style={{ width: '100%' }} placeholder="Адрес проживания (Заявителя)" value={profileForm.address} onChange={(e) => setProfileForm({...profileForm, address: e.target.value})} required />
+                        <textarea className="form-input" placeholder="Адрес проживания (Заявителя)" value={profileForm.address} onChange={(e) => setProfileForm({...profileForm, address: e.target.value})} required />
                         <button type="submit" className="btn btn-success">Сохранить профиль</button>
                     </form>
                 ) : (
@@ -759,8 +814,7 @@ function App() {
 
           {/* СОДЕРЖИМОЕ ВКЛАДКИ: ДЕТИ */}
           {activeTab === 'children' && (
-              <div style={{ width: '100%', boxSizing: 'border-box' }}>
-                
+              <div>
                 <div className="tab-header">
                     <div className="spacer"></div>
                     <h2>Мои дети</h2>
@@ -772,7 +826,7 @@ function App() {
                 </div>
 
                 {showAddForm && (
-                  <div style={{ width: '100%', padding: '20px', backgroundColor: '#f8fafc', border: '1.5px solid var(--primary)', borderRadius: '12px', marginBottom: '25px', boxSizing: 'border-box' }}>
+                  <div style={{ padding: '20px', backgroundColor: '#f8fafc', border: '1.5px solid var(--primary)', borderRadius: '12px', marginBottom: '25px' }}>
                       <h3 style={{ margin: '0 0 20px 0' }}>Новая анкета</h3>
                       <form onSubmit={handleAddChild}>
                           <div className="form-row">
@@ -792,11 +846,11 @@ function App() {
                 )}
 
                 {children.length === 0 ? ( 
-                  <div style={{ textAlign: 'center', padding: '30px', color: '#666', width: '100%' }}>Вы еще не добавили ни одной анкеты ребенка.</div> 
+                  <div style={{ textalign: 'center', padding: '30px', color: '#666' }}>Вы еще не добавили ни одной анкеты ребенка.</div> 
                 ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', width: '100%', boxSizing: 'border-box' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                     {children.map((child) => (
-                      <div key={child.child_id} style={{ width: '100%', padding: '20px', border: '1.5px solid var(--border-color)', borderRadius: '12px', backgroundColor: '#ffffff', boxSizing: 'border-box' }}>
+                      <div key={child.child_id} style={{ padding: '20px', border: '1.5px solid var(--border-color)', borderRadius: '12px', backgroundColor: '#ffffff' }}>
                         {editingChildId === child.child_id ? (
                             <form onSubmit={(e) => handleEditChildSubmit(e, child.child_id)}>
                                 <h3 style={{ color: 'var(--primary)', margin: '0 0 20px 0' }}>Редактирование анкеты</h3>
@@ -817,22 +871,24 @@ function App() {
                             </form>
                         ) : (
                             <>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '15px' }}>
-                                    <div style={{ flex: 1, minWidth: '250px' }}>
-                                        <h3 style={{ color: 'var(--primary)', fontSize: '20px', margin: '0 0 15px 0' }}>👶 {child.fio}</h3>
-                                        <p style={{ margin: '5px 0' }}><strong>Дата рождения:</strong> {new Date(child.birth_date).toLocaleDateString('ru-RU')}</p>
-                                        <p style={{ margin: '5px 0' }}><strong>СНИЛС:</strong> {formatSnils(child.snils)}</p>
-                                        <p style={{ margin: '5px 0' }}><strong>Полис ОМС:</strong> {formatOms(child.oms || '')}</p>
-                                        <p style={{ margin: '5px 0' }}><strong>Адрес прописки:</strong> {child.address || 'Не указан'}</p>
-                                        <p style={{ margin: '5px 0' }}><strong>Доп. инфо:</strong> {child.additional_info || 'Нет'}</p>
-                                    </div>
-                                    <div className="action-buttons" style={{ flexDirection: 'column' }}>
+                                {/* НОВЫЙ UX ДИЗАЙН КАРТОЧКИ: Имя слева, Кнопки справа */}
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '15px', borderBottom: '2px solid var(--border-color)', paddingBottom: '15px', marginBottom: '15px' }}>
+                                    <h3 style={{ color: 'var(--primary)', fontSize: '22px', margin: 0 }}>👶 {child.fio}</h3>
+                                    <div className="action-buttons" style={{ margin: 0 }}>
                                         <button className="btn btn-sm btn-warning" onClick={() => startEditingChild(child)}>✏️ Изменить</button>
                                         <button className="btn btn-sm btn-danger" onClick={() => handleDeleteChild(child.child_id)}>🗑 Удалить</button>
                                     </div>
                                 </div>
 
-                                {/* ДОКУМЕНТЫ */}
+                                {/* ДАННЫЕ РЕБЕНКА: В сетку из 2-х колонок на ПК */}
+                                <div className="info-grid">
+                                    <p style={{ margin: '5px 0' }}><strong>Дата рождения:</strong> {new Date(child.birth_date).toLocaleDateString('ru-RU')}</p>
+                                    <p style={{ margin: '5px 0' }}><strong>СНИЛС:</strong> {formatSnils(child.snils)}</p>
+                                    <p style={{ margin: '5px 0' }}><strong>Полис ОМС:</strong> {formatOms(child.oms || '')}</p>
+                                    <p style={{ margin: '5px 0' }}><strong>Адрес прописки:</strong> {child.address || 'Не указан'}</p>
+                                    <p style={{ margin: '5px 0', gridColumn: '1 / -1' }}><strong>Доп. инфо:</strong> {child.additional_info || 'Нет'}</p>
+                                </div>
+
                                 <div style={{ marginTop: '20px', padding: '15px', backgroundColor: '#f8fafc', borderRadius: '10px' }}>
                                     <h4 style={{ margin: '0 0 15px 0', color: '#475569' }}>📎 Прикрепленные документы</h4>
                                     {documents[child.child_id] && documents[child.child_id].length > 0 ? (
@@ -848,19 +904,18 @@ function App() {
                                         </ul>
                                     ) : ( <p style={{ fontSize: '14px', color: '#94a3b8' }}>Документы пока не загружены.</p> )}
 
-                                    <div className="action-buttons">
-                                        <select className="form-input" style={{ width: 'auto', marginBottom: 0, cursor: 'pointer' }} value={uploadTypes[child.child_id] || ""} onChange={(e) => setUploadTypes({...uploadTypes, [child.child_id]: e.target.value})}>
+                                    <div className="form-row" style={{ alignItems: 'center' }}>
+                                        <select className="form-input" style={{ marginBottom: 0, cursor: 'pointer' }} value={uploadTypes[child.child_id] || ""} onChange={(e) => setUploadTypes({...uploadTypes, [child.child_id]: e.target.value})}>
                                             <option value="" disabled>-- Выберите тип --</option>
                                             <option value="Свидетельство о рождении">Свидетельство о рождении</option>
                                             <option value="Полис ОМС">Полис ОМС</option>
                                             <option value="Мед. справка 079/у">Мед. справка 079/у</option>
                                         </select>
-                                        <input type="file" className="form-input" style={{ width: 'auto', marginBottom: 0, padding: '9px', background: '#fff' }} onChange={(e) => setUploadFiles({...uploadFiles, [child.child_id]: e.target.files[0]})} />
+                                        <input type="file" className="form-input" style={{ marginBottom: 0, background: '#fff' }} onChange={(e) => setUploadFiles({...uploadFiles, [child.child_id]: e.target.files[0]})} />
                                         <button className="btn btn-secondary" onClick={() => handleUploadDocument(child.child_id)}>Загрузить</button>
                                     </div>
                                 </div>
 
-                                {/* ЗАЯВКА НА СМЕНУ С ДЕТАЛЯМИ */}
                                 <div style={{ marginTop: '20px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
                                     <select 
                                         className="form-input" 
@@ -913,7 +968,15 @@ function App() {
                                         />
                                     </div>
 
-                                    <button className="btn btn-primary" style={{ padding: '12px', justifyContent: 'center' }} onClick={() => handleApply(child.child_id)}>
+                                    {shiftDetails[child.child_id]?.accommodation && (
+                                        <div style={{ textalign: 'center', margin: '15px 0', fontSize: '18px', color: '#475569' }}>
+                                            Итоговая стоимость: <strong style={{ color: 'var(--success)', fontSize: '22px' }}>
+                                                {getPriceForAccommodation(shiftDetails[child.child_id]?.accommodation).toLocaleString('ru-RU')} руб.
+                                            </strong>
+                                        </div>
+                                    )}
+
+                                    <button className="btn btn-primary" style={{ padding: '12px' }} onClick={() => handleApply(child.child_id)}>
                                         Подать заявку
                                     </button>
                                 </div>
@@ -928,11 +991,11 @@ function App() {
 
           {/* СОДЕРЖИМОЕ ВКЛАДКИ: ЗАЯВКИ */}
           {activeTab === 'applications' && (
-              <div style={{ width: '100%', boxSizing: 'border-box' }}>
-                <h2 style={{ margin: '0 0 20px 0', textAlign: 'center' }}>Статус поданных заявок</h2>
+              <div>
+                <h2 style={{ margin: '0 0 20px 0', textalign: 'center' }}>Статус поданных заявок</h2>
                 
                 {applications.length === 0 ? ( 
-                    <p style={{ color: '#666', textAlign: 'center' }}>У вас пока нет активных заявок.</p> 
+                    <p style={{ color: '#666', textalign: 'center' }}>У вас пока нет активных заявок.</p> 
                 ) : (
                     <div className="table-container">
                         <table className="modern-table">
@@ -941,7 +1004,7 @@ function App() {
                             <th>ФИО Ребенка</th>
                             <th>Инфо о путевке</th>
                             <th>Статус</th>
-                            <th style={{ textAlign: 'center' }}>Действия</th>
+                            <th style={{ textalign: 'center' }}>Действия</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -965,7 +1028,7 @@ function App() {
                                         </div>
                                     )}
                                 </td>
-                                <td style={{ textAlign: 'center' }}>
+                                <td style={{ textalign: 'center' }}>
                                     <div className="action-buttons" style={{ justifyContent: 'center' }}>
                                         {app.status_name?.toLowerCase().includes('одобр') && !app.card_mask && (
                                             <button className="btn btn-sm btn-success" onClick={() => { setPayingApp(app); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>💳 Оплатить</button>

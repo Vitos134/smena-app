@@ -130,6 +130,7 @@ textarea.form-input { min-height: 80px; resize: vertical; }
   gap: 8px;
   font-family: inherit;
   text-align: center;
+  height: max-content;
 }
 
 .btn-primary { background: var(--primary); color: white; }
@@ -140,7 +141,7 @@ textarea.form-input { min-height: 80px; resize: vertical; }
 
 .btn-sm { padding: 6px 12px; font-size: 13px; border-radius: 6px; }
 
-.action-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+.action-buttons { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-start; }
 
 .badge {
   padding: 6px 12px;
