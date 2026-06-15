@@ -1,7 +1,7 @@
 require('dotenv').config(); 
 const express = require('express');
 const cors = require('cors');
-const bcrypt = require('bcrypt'); // Используем bcrypt, который мы уже установили
+const bcrypt = require('bcrypt'); // Используем bcrypt, который мы установили
 const jwt = require('jsonwebtoken');
 const multer = require('multer');
 const path = require('path');
@@ -9,6 +9,7 @@ const fs = require('fs');
 const { Pool } = require('pg');
 const dns = require('dns');
 const dnsPromises = dns.promises;
+const ExcelJS = require('exceljs'); // Библиотека для выгрузки отчетов в Excel (FR-21)
 
 // Принудительно заставляем Node.js использовать публичные DNS Google
 dns.setServers(['8.8.8.8', '8.8.4.4']);
@@ -26,7 +27,7 @@ const pool = new Pool({
     user: process.env.DB_USER || 'postgres',
     host: process.env.DB_HOST || 'localhost',
     database: process.env.DB_NAME || 'smena_db',
-    password: process.env.DB_PASSWORD || 'Jndfkbrjpkbyf214', // 
+    password: process.env.DB_PASSWORD || 'Jndfkbrjpkbyf214', 
     port: process.env.DB_PORT || 5432,
 });
 
@@ -65,7 +66,7 @@ const auth = (req, res, next) => {
 // 1. МАРШРУТЫ АВТОРИЗАЦИИ
 // ==========================================
 
-// Регистрация с DNS-проверкой и транзакциями
+// Регистрация с DNS-проверкой существования домена и транзакциями
 app.post('/api/register', async (req, res) => {
     const client = await pool.connect();
     try {
@@ -76,7 +77,7 @@ app.post('/api/register', async (req, res) => {
         }
         const domain = emailParts[1];
 
-        // DNS-запрос
+        // DNS-запрос (Проверка существования почтового домена)
         try {
             const mxRecords = await dnsPromises.resolveMx(domain);
             if (!mxRecords || mxRecords.length === 0) {
@@ -92,16 +93,16 @@ app.post('/api/register', async (req, res) => {
         await client.query('BEGIN'); // Старт транзакции
         const hashedPassword = await bcrypt.hash(password, 10);
         
-        // Создаем пользователя (убрал ошибочный UPDATE, который тут был раньше)
+        // Создаем пользователя в таблице users
         const newUser = await client.query(
             'INSERT INTO users (email, password_hash, role_id) VALUES ($1, $2, 1) RETURNING *', 
             [email, hashedPassword]
         );
 
-        await client.query('COMMIT'); // Успех!
+        await client.query('COMMIT'); // Завершаем транзакцию при успехе
         res.status(201).json({ message: 'Регистрация успешна!' });
     } catch (err) {
-        await client.query('ROLLBACK'); // Откат в случае ошибки
+        await client.query('ROLLBACK'); // Откат изменений в БД в случае ошибки
         console.error('Ошибка регистрации:', err.message);
         if (err.code === '23505') { 
             return res.status(400).json({ error: 'Пользователь с таким Email уже существует!' });
@@ -112,6 +113,7 @@ app.post('/api/register', async (req, res) => {
     }
 });
 
+// Вход в систему (Логин)
 app.post('/api/login', async (req, res) => {
     try {
         const { email, password } = req.body;
@@ -126,7 +128,7 @@ app.post('/api/login', async (req, res) => {
             return res.status(400).json({ error: 'Неверная почта или пароль' });
         }
 
-        // ВАЖНО: сохраняем user_id в токен, чтобы работало везде
+        // Записываем user_id и role_id в токен
         const token = jwt.sign(
             { user_id: user.rows[0].user_id, role_id: user.rows[0].role_id }, 
             process.env.JWT_SECRET || 'secret_key', 
@@ -140,6 +142,7 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
+// Сброс и восстановление пароля
 app.post('/api/reset-password', async (req, res) => {
     try {
         const { email, newPassword } = req.body;
@@ -159,10 +162,11 @@ app.post('/api/reset-password', async (req, res) => {
     }
 });
 
+// ==========================================
+// 2. МАРШРУТЫ ПРОФИЛЯ РОДИТЕЛЯ
+// ==========================================
 
-// ==========================================
-// 2. ПРОФИЛЬ РОДИТЕЛЯ
-// ==========================================
+// Получить данные профиля
 app.get('/api/profile', auth, async (req, res) => {
     try {
         const user = await pool.query(
@@ -176,6 +180,7 @@ app.get('/api/profile', auth, async (req, res) => {
     }
 });
 
+// Обновить данные профиля
 app.put('/api/profile', auth, async (req, res) => {
     try {
         const { fio, phone, address } = req.body;
@@ -190,10 +195,11 @@ app.put('/api/profile', auth, async (req, res) => {
     }
 });
 
-
 // ==========================================
 // 3. МАРШРУТЫ РАБОТЫ С ДЕТЬМИ (CRUD)
 // ==========================================
+
+// Получить список детей текущего родителя
 app.get('/api/children', auth, async (req, res) => {
     try {
         const children = await pool.query(
@@ -207,9 +213,9 @@ app.get('/api/children', auth, async (req, res) => {
     }
 });
 
+// Добавить новую анкету ребенка (С автоматическим "подсасыванием" адреса)
 app.post('/api/children', auth, async (req, res) => {
     try {
-        // Подсасывание адреса реализовано
         let { fio, birth_date, snils, oms, additional_info, address } = req.body;
 
         const existingChild = await pool.query('SELECT * FROM children WHERE snils = $1', [snils]);
@@ -217,6 +223,7 @@ app.post('/api/children', auth, async (req, res) => {
             return res.status(400).json({ error: 'Ребенок с таким СНИЛС уже добавлен в систему!' });
         }
 
+        // Если адрес прописки ребенка не введен — автоматически берем адрес родителя
         if (!address || address.trim() === '') {
             const parentData = await pool.query('SELECT address FROM users WHERE user_id = $1', [req.user.user_id]);
             if (parentData.rows.length > 0 && parentData.rows[0].address) {
@@ -235,6 +242,7 @@ app.post('/api/children', auth, async (req, res) => {
     }
 });
 
+// Отредактировать анкету ребенка
 app.put('/api/children/:id', auth, async (req, res) => {
     try {
         const { fio, birth_date, snils, oms, additional_info, address } = req.body;
@@ -259,6 +267,7 @@ app.put('/api/children/:id', auth, async (req, res) => {
     }
 });
 
+// Удалить анкету ребенка (Каскадно чистит документы и заявки)
 app.delete('/api/children/:id', auth, async (req, res) => {
     try {
         const { id } = req.params;
@@ -272,14 +281,14 @@ app.delete('/api/children/:id', auth, async (req, res) => {
     }
 });
 
+// ==========================================
+// 4. МАРШРУТЫ СМЕН И ДОКУМЕНТОВ
+// ==========================================
 
-// ==========================================
-// 4. СМЕНЫ И ДОКУМЕНТЫ
-// ==========================================
+// Получить список всех доступных смен
 app.get('/api/shifts', async (req, res) => {
     try {
-        // Запрос адаптирован: program_name теперь хранится прямо в shifts
-        const shifts = await pool.query('SELECT shift_id, start_date, end_date, shift_code, program_name FROM shifts');
+        const shifts = await pool.query('SELECT shift_id, start_date, end_date, shift_code, program_name, capacity FROM shifts');
         res.json(shifts.rows);
     } catch (err) {
         console.error('Ошибка получения смен:', err.message);
@@ -287,6 +296,7 @@ app.get('/api/shifts', async (req, res) => {
     }
 });
 
+// Загрузка нового файла/скана документа для ребенка через Multer
 app.post('/api/documents', auth, upload.single('file'), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: 'Файл не был загружен' });
@@ -303,6 +313,7 @@ app.post('/api/documents', auth, upload.single('file'), async (req, res) => {
     }
 });
 
+// Получить список загруженных документов ребенка
 app.get('/api/documents/:childId', auth, async (req, res) => {
     try {
         const docs = await pool.query('SELECT * FROM documents WHERE child_id = $1', [req.params.childId]);
@@ -313,6 +324,7 @@ app.get('/api/documents/:childId', auth, async (req, res) => {
     }
 });
 
+// Удалить документ (Чистит и запись в БД, и физический файл с жесткого диска)
 app.delete('/api/documents/:id', auth, async (req, res) => {
     try {
         const { id } = req.params;
@@ -321,7 +333,7 @@ app.delete('/api/documents/:id', auth, async (req, res) => {
         if (doc.rows.length > 0) {
             const filePath = path.join(__dirname, doc.rows[0].file_path);
             if (fs.existsSync(filePath)) {
-                fs.unlinkSync(filePath); // Физически удаляем файл с компьютера
+                fs.unlinkSync(filePath); // Удаляем физически с компьютера
             }
             await pool.query('DELETE FROM documents WHERE document_id = $1', [id]);
             res.json({ message: 'Документ успешно удален' });
@@ -334,22 +346,53 @@ app.delete('/api/documents/:id', auth, async (req, res) => {
     }
 });
 
-
 // ==========================================
 // 5. ЗАЯВКИ РОДИТЕЛЯ
 // ==========================================
-app.post('/api/applications', async (req, res) => {
+
+// Подать новую заявку на смену 
+app.post('/api/applications', auth, async (req, res) => {
     try {
-        const { child_id, shift_id, season, accommodation_type, shift_number } = req.body;
+        const { child_id, shift_id, season, accommodation_type, shift_number, friend_request } = req.body;
+
+        // --- ПРОВЕРКА FR-12: Черный список ---
+        const childCheck = await pool.query(
+            'SELECT is_blacklisted, blacklist_reason FROM children WHERE child_id = $1 AND parent_id = $2',
+            [child_id, req.user.user_id]
+        );
+        if (childCheck.rows.length === 0) return res.status(404).json({ error: 'Анкета ребенка не найдена.' });
         
+        if (childCheck.rows[0].is_blacklisted) {
+            return res.status(403).json({ 
+                error: `Подача заявки заблокирована! Ребенок в черном списке. Причина: ${childCheck.rows[0].blacklist_reason}` 
+            });
+        }
+
+        // --- ПРОВЕРКА FR-09: Контроль свободных мест ---
+        const shiftData = await pool.query('SELECT capacity FROM shifts WHERE shift_id = $1', [shift_id]);
+        if (shiftData.rows.length === 0) return res.status(404).json({ error: 'Указанная смена не найдена.' });
+        const maxCapacity = shiftData.rows[0].capacity;
+
+        // Считаем активные заявки на эту смену (В работе, Одобрено, Оплачено)
+        const countApps = await pool.query(
+            'SELECT COUNT(*) FROM applications WHERE shift_id = $1 AND status_id IN (1, 2, 4)', 
+            [shift_id]
+        );
+        const currentOccupied = parseInt(countApps.rows[0].count);
+        if (currentOccupied >= maxCapacity) {
+            return res.status(400).json({ error: 'К сожалению, на выбранную смену больше нет свободных мест!' });
+        }
+
+        // --- РАСЧЕТ СТОИМОСТИ ---
         let price = 35000;
         if (accommodation_type === 'Корпус улучшенный') price = 45000;
         if (accommodation_type === 'Глэмпинг') price = 55000;
 
+        // --- СОХРАНЕНИЕ ЗАЯВКИ ---
         const newApp = await pool.query(
-            `INSERT INTO applications (child_id, shift_id, season, accommodation_type, shift_number, price, status_id) 
-            VALUES ($1, $2, $3, $4, $5, $6, 1) RETURNING *`,
-            [child_id, shift_id, season, accommodation_type, shift_number || 1, price]
+            `INSERT INTO applications (child_id, shift_id, season, accommodation_type, shift_number, price, status_id, friend_request) 
+            VALUES ($1, $2, $3, $4, $5, $6, 1, $7) RETURNING *`,
+            [child_id, shift_id, season, accommodation_type, shift_number || 1, price, friend_request || null]
         );
         res.status(201).json({ message: 'Заявка успешно создана', application: newApp.rows[0] });
     } catch (err) {
@@ -358,9 +401,9 @@ app.post('/api/applications', async (req, res) => {
     }
 });
 
+// Получить список всех заявок текущего родителя
 app.get('/api/applications', auth, async (req, res) => {
     try {
-        // Запрос адаптирован: Оплата берется прямо из таблицы заявок
         const apps = await pool.query(`
             SELECT 
                 a.app_id, c.fio, s.shift_code as code, a.price,
@@ -380,6 +423,7 @@ app.get('/api/applications', auth, async (req, res) => {
     }
 });
 
+// Отменить (удалить) заявку родителем
 app.delete('/api/applications/:id', auth, async (req, res) => {
     try {
         const appCheck = await pool.query(`
@@ -400,10 +444,11 @@ app.delete('/api/applications/:id', auth, async (req, res) => {
     }
 });
 
+// ==========================================
+// 6. АДМИН-ПАНЕЛЬ (ТОЛЬКО ДЛЯ МЕНЕДЖЕРОВ)
+// ==========================================
 
-// ==========================================
-// 6. АДМИН-ПАНЕЛЬ (ДЛЯ МЕНЕДЖЕРОВ)
-// ==========================================
+// Получить абсолютно все заявки в системе для панели менеджера
 app.get('/api/admin/applications', auth, async (req, res) => {
     try {
         if (req.user.role_id !== 2) return res.status(403).json({ error: 'Доступ запрещен.' });
@@ -414,7 +459,7 @@ app.get('/api/admin/applications', auth, async (req, res) => {
                 c.birth_date, c.snils, c.oms, c.additional_info, c.address as child_address, 
                 c.is_blacklisted, c.blacklist_reason, u.email as parent_email, 
                 u.phone as parent_phone, u.fio as parent_fio, u.address as parent_address, 
-                s.shift_code, st.status_name,
+                s.shift_code, st.status_name, a.friend_request,
                 a.payment_amount, a.card_mask, a.payment_date
             FROM applications a 
             JOIN children c ON a.child_id = c.child_id 
@@ -430,6 +475,7 @@ app.get('/api/admin/applications', auth, async (req, res) => {
     }
 });
 
+// Изменить статус заявки (Одобрить / Отклонить с указанием причины)
 app.put('/api/admin/applications/:id/status', auth, async (req, res) => {
     try {
         if (req.user.role_id !== 2) return res.status(403).json({ error: 'Доступ запрещен.' });
@@ -446,6 +492,7 @@ app.put('/api/admin/applications/:id/status', auth, async (req, res) => {
     }
 });
 
+// Управление Черным Списком детей (Блокировка / Разблокировка)
 app.put('/api/admin/children/:id/blacklist', auth, async (req, res) => {
     try {
         if (req.user.role_id !== 2) return res.status(403).json({ error: 'Доступ запрещен.' });
@@ -462,14 +509,22 @@ app.put('/api/admin/children/:id/blacklist', auth, async (req, res) => {
     }
 });
 
+// Добавление новой смены менеджером (С возможностью указать лимит мест capacity)
 app.post('/api/admin/shifts', async (req, res) => {
     try {
-        const { program_name, shift_code, start_date, end_date } = req.body;
+        const { program_name, shift_code, start_date, end_date, capacity } = req.body;
+        
+        if (!program_name || !shift_code || !start_date || !end_date) {
+            return res.status(400).json({ error: 'Пожалуйста, заполните все обязательные поля!' });
+        }
+
+        const finalCapacity = capacity ? parseInt(capacity) : 30; // 30 мест по умолчанию, если не указано
+
         const result = await pool.query(
-            'INSERT INTO shifts (program_name, shift_code, start_date, end_date) VALUES ($1, $2, $3, $4) RETURNING *',
-            [program_name, shift_code, start_date, end_date]
+            'INSERT INTO shifts (program_name, shift_code, start_date, end_date, capacity) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+            [program_name, shift_code, start_date, end_date, finalCapacity]
         );
-        res.status(201).json({ message: 'Смена добавлена', shift: result.rows[0] });
+        res.status(201).json({ message: 'Смена успешно добавлена', shift: result.rows[0] });
     } catch (err) {
         console.error('Ошибка добавления смены:', err.message);
         res.status(500).json({ error: 'Ошибка сервера при добавлении смены.' });
@@ -484,7 +539,7 @@ app.post('/api/payments', auth, async (req, res) => {
         const { application_id, amount, card_number } = req.body;
         const cardMask = '**** **** **** ' + card_number.slice(-4);
 
-        // Обновляем заявку напрямую, так как таблица payments удалена из БД
+        // Обновляем заявку напрямую и записываем чек, так как отдельная таблица удалена ради удобства
         await pool.query(
             'UPDATE applications SET status_id = 4, payment_amount = $1, card_mask = $2, payment_date = NOW() WHERE app_id = $3',
             [amount, cardMask, application_id]
@@ -498,9 +553,72 @@ app.post('/api/payments', auth, async (req, res) => {
 });
 
 // ==========================================
+// 8. ЭКСПОРТ ОТЧЕТОВ В EXCEL (FR-21)
+// ==========================================
+app.get('/api/admin/export/applications', auth, async (req, res) => {
+    try {
+        if (req.user.role_id !== 2) return res.status(403).json({ error: 'Доступ запрещен.' });
+
+        const apps = await pool.query(`
+            SELECT 
+                a.app_id, c.fio as child_fio, c.birth_date, c.snils, 
+                u.fio as parent_fio, u.phone, u.email,
+                s.shift_code, a.accommodation_type, st.status_name, 
+                a.price, a.payment_amount, a.friend_request, a.created_at
+            FROM applications a 
+            JOIN children c ON a.child_id = c.child_id 
+            JOIN users u ON c.parent_id = u.user_id 
+            JOIN shifts s ON a.shift_id = s.shift_id 
+            JOIN statuses st ON a.status_id = st.status_id 
+            ORDER BY a.app_id DESC
+        `);
+
+        const workbook = new ExcelJS.Workbook();
+        const worksheet = workbook.addWorksheet('Реестр заявок');
+
+        worksheet.columns = [
+            { header: '№ Заявки', key: 'app_id', width: 10 },
+            { header: 'Дата подачи', key: 'created_at', width: 15 },
+            { header: 'ФИО Ребенка', key: 'child_fio', width: 35 },
+            { header: 'СНИЛС', key: 'snils', width: 15 },
+            { header: 'Родитель', key: 'parent_fio', width: 35 },
+            { header: 'Телефон', key: 'phone', width: 18 },
+            { header: 'Смена', key: 'shift_code', width: 15 },
+            { header: 'Условия', key: 'accommodation_type', width: 20 },
+            { header: 'Статус', key: 'status_name', width: 20 },
+            { header: 'Сумма к оплате', key: 'price', width: 15 },
+            { header: 'Оплачено', key: 'payment_amount', width: 15 },
+            { header: 'Пожелания (друг)', key: 'friend_request', width: 25 },
+        ];
+
+        worksheet.getRow(1).font = { bold: true };
+        worksheet.addRows(apps.rows);
+
+        worksheet.eachRow((row, rowNumber) => {
+            if (rowNumber > 1) { 
+                const dateCell = row.getCell('created_at');
+                if (dateCell.value) {
+                    const date = new Date(dateCell.value);
+                    dateCell.value = date.toLocaleDateString('ru-RU');
+                }
+            }
+        });
+
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', 'attachment; filename=' + encodeURIComponent('Реестр_заявок_Смена.xlsx'));
+
+        await workbook.xlsx.write(res);
+        res.end();
+    } catch (err) {
+        console.error('Ошибка выгрузки Excel:', err.message);
+        res.status(500).json({ error: 'Ошибка сервера при выгрузке отчета' });
+    }
+});
+
+// ==========================================
 // ЗАПУСК СЕРВЕРА
 // ==========================================
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => { 
-    console.log(`Сервер "Смена" запущен и слушает порт ${PORT}`); 
+    console.log(`Сервер "Смена" успешно запущен и слушает порт ${PORT}`); 
 });
