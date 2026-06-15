@@ -1,7 +1,61 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, createContext, useContext } from 'react';
 import './App.css';
 
 const API_URL = 'http://localhost:5000/api';
+
+// ==========================================
+// КОНТЕКСТ ДЛЯ КАСТОМНЫХ УВЕДОМЛЕНИЙ (ЗАМЕНА ALERT И CONFIRM)
+// ==========================================
+const ModalContext = createContext();
+
+export const useModal = () => useContext(ModalContext);
+
+const ModalProvider = ({ children }) => {
+    const [confirmConfig, setConfirmConfig] = useState(null);
+    const [toastMessage, setToastMessage] = useState('');
+
+    // Замена window.confirm()
+    const showConfirm = (title, message, onConfirm, confirmText = 'Да', cancelText = 'Отмена', danger = false) => {
+        setConfirmConfig({ title, message, onConfirm, confirmText, cancelText, danger });
+    };
+
+    // Замена alert()
+    const showAlert = (message) => {
+        setToastMessage(message);
+        setTimeout(() => setToastMessage(''), 3000); // Автоматически скрываем через 3 сек
+    };
+
+    return (
+        <ModalContext.Provider value={{ showConfirm, showAlert }}>
+            {children}
+            {/* Отрисовка Confirm окна */}
+            {confirmConfig && (
+                <div className="modal-overlay">
+                    <div className="modal-content">
+                        <h3>{confirmConfig.title}</h3>
+                        {confirmConfig.message && <p>{confirmConfig.message}</p>}
+                        <div className="modal-actions">
+                            <button 
+                                className={`btn ${confirmConfig.danger ? 'btn-danger' : 'btn-success'}`} 
+                                onClick={() => { confirmConfig.onConfirm(); setConfirmConfig(null); }}
+                            >
+                                {confirmConfig.confirmText}
+                            </button>
+                            <button className="btn btn-secondary" onClick={() => setConfirmConfig(null)}>
+                                {confirmConfig.cancelText}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+            {/* Отрисовка всплывающего Toast-Alert */}
+            {toastMessage && (
+                <div className="toast-alert">{toastMessage}</div>
+            )}
+        </ModalContext.Provider>
+    );
+};
+
 
 // ==========================================
 // ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ И МАСКИ
@@ -59,10 +113,11 @@ const getBadgeColor = (statusName) => {
 // ==========================================
 // ГЛАВНЫЙ КОМПОНЕНТ APP
 // ==========================================
-function App() {
+function MainApp() {
   const [token, setToken] = useState(localStorage.getItem('token') || ''); 
   const [userRole, setUserRole] = useState(Number(localStorage.getItem('userRole')) || null);
   const [activeTab, setActiveTab] = useState('children');
+  const { showAlert } = useModal();
 
   const fetchAPI = async (endpoint, options = {}) => {
     const headers = { ...options.headers };
@@ -81,6 +136,7 @@ function App() {
     localStorage.removeItem('userRole');
     setToken('');
     setUserRole(null);
+    showAlert('Вы успешно вышли из системы');
   };
 
   if (!token) return <AuthScreen setToken={setToken} setUserRole={setUserRole} fetchAPI={fetchAPI} />;
@@ -109,6 +165,15 @@ function App() {
   );
 }
 
+// Оборачиваем всё приложение в провайдер модальных окон
+export default function App() {
+  return (
+      <ModalProvider>
+          <MainApp />
+      </ModalProvider>
+  );
+}
+
 // ==========================================
 // 1. КОМПОНЕНТ АВТОРИЗАЦИИ
 // ==========================================
@@ -119,18 +184,19 @@ function AuthScreen({ setToken, setUserRole, fetchAPI }) {
   const [password, setPassword] = useState('');
   const [message, setMessage] = useState('');
   const [pdConsent, setPdConsent] = useState(false);
+  const { showAlert } = useModal();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
         if (isResetMode) {
             await fetchAPI('/reset-password', { method: 'POST', body: JSON.stringify({ email, newPassword: password }) });
-            alert('Пароль изменен!');
+            showAlert('Пароль успешно изменен!');
             setIsResetMode(false); setPassword(''); setMessage('');
         } else if (isRegisterMode) {
             if (!pdConsent) return setMessage('Необходимо согласие на обработку ПД!');
             await fetchAPI('/register', { method: 'POST', body: JSON.stringify({ email, password }) });
-            alert('Регистрация успешна!');
+            showAlert('Регистрация успешна!');
             setIsRegisterMode(false); setPassword(''); setMessage('');
         } else {
             const data = await fetchAPI('/login', { method: 'POST', body: JSON.stringify({ email, password }) });
@@ -138,6 +204,7 @@ function AuthScreen({ setToken, setUserRole, fetchAPI }) {
             setUserRole(data.role_id);
             localStorage.setItem('token', data.token);
             localStorage.setItem('userRole', data.role_id);
+            showAlert('Успешный вход в систему');
         }
     } catch (err) { setMessage('Ошибка: ' + err.message); }
   };
@@ -192,6 +259,7 @@ function Profile({ fetchAPI }) {
   const [profile, setProfile] = useState({});
   const [isEditing, setIsEditing] = useState(false);
   const [form, setForm] = useState({ fio: '', phone: '', address: '' });
+  const { showAlert } = useModal();
 
   useEffect(() => {
       fetchAPI('/profile').then(data => { setProfile(data); setForm({ fio: data.fio || '', phone: data.phone || '', address: data.address || '' }); }).catch(console.error);
@@ -203,8 +271,8 @@ function Profile({ fetchAPI }) {
           await fetchAPI('/profile', { method: 'PUT', body: JSON.stringify(form) });
           setProfile({ ...profile, ...form });
           setIsEditing(false);
-          alert('Профиль обновлен!');
-      } catch (err) { alert(err.message); }
+          showAlert('Профиль успешно обновлен!');
+      } catch (err) { showAlert(err.message); }
   };
 
   return (
@@ -248,6 +316,8 @@ function Children({ fetchAPI }) {
   const [editForm, setEditForm] = useState({});
   const [uploadFiles, setUploadFiles] = useState({});
   const [uploadTypes, setUploadTypes] = useState({});
+  
+  const { showConfirm, showAlert } = useModal();
 
   const loadData = async () => {
       try {
@@ -264,49 +334,63 @@ function Children({ fetchAPI }) {
   const handleAdd = async (e) => {
       e.preventDefault();
       const cleanSnils = form.snils.replace(/\D/g, ''); const cleanOms = form.oms.replace(/\D/g, '');
-      if (cleanSnils.length !== 11) return alert('СНИЛС должен содержать 11 цифр!');
-      if (cleanOms.length !== 16) return alert('ОМС должен содержать 16 цифр!');
-      if (form.birth_date.length !== 10) return alert('Дата рождения должна быть в формате ДД.ММ.ГГГГ');
+      if (cleanSnils.length !== 11) return showAlert('СНИЛС должен содержать 11 цифр!');
+      if (cleanOms.length !== 16) return showAlert('ОМС должен содержать 16 цифр!');
+      if (form.birth_date.length !== 10) return showAlert('Дата рождения должна быть в формате ДД.ММ.ГГГГ');
       const [day, month, year] = form.birth_date.split('.');
       try {
           await fetchAPI('/children', { method: 'POST', body: JSON.stringify({ ...form, birth_date: `${year}-${month}-${day}`, snils: cleanSnils, oms: cleanOms }) });
-          alert('Анкета добавлена!');
+          showAlert('Анкета добавлена!');
           setForm({ fio: '', birth_date: '', snils: '', oms: '', address: '', additional_info: '' });
           setShowAddForm(false);
           loadData();
-      } catch (err) { alert(err.message); }
+      } catch (err) { showAlert(err.message); }
   };
 
   const handleEdit = async (e, childId) => {
       e.preventDefault();
       const cleanSnils = editForm.snils.replace(/\D/g, ''); const cleanOms = editForm.oms.replace(/\D/g, '');
-      if (editForm.birth_date.length !== 10) return alert('Дата рождения должна быть в формате ДД.ММ.ГГГГ');
+      if (editForm.birth_date.length !== 10) return showAlert('Дата рождения должна быть в формате ДД.ММ.ГГГГ');
       const [day, month, year] = editForm.birth_date.split('.');
       try {
           await fetchAPI(`/children/${childId}`, { method: 'PUT', body: JSON.stringify({ ...editForm, birth_date: `${year}-${month}-${day}`, snils: cleanSnils, oms: cleanOms }) });
-          alert('Анкета обновлена!'); setEditingId(null); loadData();
-      } catch (err) { alert(err.message); }
+          showAlert('Анкета обновлена!'); setEditingId(null); loadData();
+      } catch (err) { showAlert(err.message); }
   };
 
-  const handleDelete = async (id) => {
-      if (!window.confirm('ВНИМАНИЕ! Вы точно хотите удалить анкету?')) return;
-      try { await fetchAPI(`/children/${id}`, { method: 'DELETE' }); loadData(); } catch (err) { alert(err.message); }
+  const handleDelete = (id) => {
+      showConfirm(
+          'Удалить анкету?', 
+          'Все связанные заявки и документы ребенка будут безвозвратно удалены!', 
+          async () => {
+              try { await fetchAPI(`/children/${id}`, { method: 'DELETE' }); loadData(); showAlert('Анкета удалена'); } 
+              catch (err) { showAlert(err.message); }
+          },
+          'Удалить', 'Отмена', true
+      );
   };
 
   const handleUpload = async (childId) => {
       const file = uploadFiles[childId]; const docType = uploadTypes[childId];
-      if (!file || !docType) return alert("Выберите тип документа и файл!");
+      if (!file || !docType) return showAlert("Выберите тип документа и файл!");
       const formData = new FormData();
       formData.append('file', file); formData.append('child_id', childId); formData.append('document_type', docType);
       try {
           await fetchAPI('/documents', { method: 'POST', body: formData });
-          alert('Документ загружен!'); setUploadFiles({...uploadFiles, [childId]: null}); loadData();
-      } catch (err) { alert(err.message); }
+          showAlert('Документ успешно загружен!'); setUploadFiles({...uploadFiles, [childId]: null}); loadData();
+      } catch (err) { showAlert(err.message); }
   };
 
-  const handleDeleteDoc = async (docId) => {
-      if (!window.confirm('Удалить документ?')) return;
-      try { await fetchAPI(`/documents/${docId}`, { method: 'DELETE' }); loadData(); } catch (err) { alert(err.message); }
+  const handleDeleteDoc = (docId) => {
+      showConfirm(
+          'Удалить документ?', 
+          'Файл будет удален с сервера без возможности восстановления.',
+          async () => {
+              try { await fetchAPI(`/documents/${docId}`, { method: 'DELETE' }); loadData(); showAlert('Документ удален'); } 
+              catch (err) { showAlert(err.message); }
+          },
+          'Удалить', 'Отмена', true
+      );
   };
 
   return (
@@ -412,6 +496,8 @@ function Applications({ fetchAPI }) {
   const [form, setForm] = useState({ child_id: '', shift_id: '', season: '', accommodation_type: '', friend_request: '' });
   const [payingApp, setPayingApp] = useState(null);
   const [card, setCard] = useState({ number: '', expiry: '', cvc: '' });
+  
+  const { showConfirm, showAlert } = useModal();
 
   const loadData = async () => {
       try {
@@ -426,18 +512,30 @@ function Applications({ fetchAPI }) {
       e.preventDefault();
       try {
           await fetchAPI('/applications', { method: 'POST', body: JSON.stringify(form) });
-          alert('Заявка успешно подана! Ожидайте подтверждения менеджера.'); 
+          showAlert('Заявка успешно подана! Ожидайте подтверждения менеджера.'); 
           loadData();
           setForm({ child_id: '', shift_id: '', season: '', accommodation_type: '', friend_request: '' });
-      } catch (err) { alert(err.message); }
+      } catch (err) { showAlert(err.message); } // Ошибка отсутствия документов выведется тут красивым попапом
   };
 
   const handlePayment = async (e) => {
       e.preventDefault();
       try {
           await fetchAPI('/payments', { method: 'POST', body: JSON.stringify({ application_id: payingApp.app_id, amount: payingApp.price, card_number: card.number.replace(/\D/g, '') }) });
-          alert('Оплата прошла успешно!'); setPayingApp(null); loadData();
-      } catch (err) { alert(err.message); }
+          showAlert('Оплата прошла успешно! Спасибо.'); setPayingApp(null); loadData();
+      } catch (err) { showAlert(err.message); }
+  };
+
+  const handleCancelApplication = (appId) => {
+      showConfirm(
+          'Отменить заявку?', 
+          'Вы уверены, что хотите отозвать эту заявку? Восстановить ее будет невозможно.', 
+          async () => {
+              try { await fetchAPI(`/applications/${appId}`, { method: 'DELETE' }); loadData(); showAlert('Заявка отменена'); } 
+              catch(e){ showAlert(e.message); }
+          },
+          'Да, отменить', 'Нет', true
+      );
   };
 
   return (
@@ -495,7 +593,7 @@ function Applications({ fetchAPI }) {
           </form>
 
           <h2>Мои заявки</h2>
-          <div className="table-container">
+          <div className="table-responsive">
             <table className="modern-table">
                 <thead>
                     <tr>
@@ -518,10 +616,7 @@ function Applications({ fetchAPI }) {
                             <td style={{textAlign: 'center'}}>
                                 <div className="action-buttons" style={{justifyContent: 'center'}}>
                                     {app.status_name === 'Одобрена' && !app.card_mask && <button className="btn btn-sm btn-success" onClick={() => { setPayingApp(app); window.scrollTo(0,0); }}>💳 Оплатить</button>}
-                                    {!app.card_mask && <button className="btn btn-sm btn-secondary" onClick={async () => {
-                                        if(!window.confirm('Отменить заявку?')) return;
-                                        try { await fetchAPI(`/applications/${app.app_id}`, { method: 'DELETE' }); loadData(); } catch(e){ alert(e.message); }
-                                    }}>✖ Отменить</button>}
+                                    {!app.card_mask && <button className="btn btn-sm btn-secondary" onClick={() => handleCancelApplication(app.app_id)}>✖ Отменить</button>}
                                 </div>
                             </td>
                         </tr>
@@ -542,13 +637,12 @@ function AdminDashboard({ fetchAPI, token, handleLogout }) {
   const [showReport, setShowReport] = useState(false);
   const [shiftForm, setShiftForm] = useState({ program_name: '', shift_code: '', start_date: '', end_date: '', capacity: '' });
   
-  // Состояния для развертывания информации о ребенке
   const [expandedApp, setExpandedApp] = useState(null);
   const [childDocs, setChildDocs] = useState([]);
-
-  // Состояния для инлайн-ЧС (Опциональный ввод)
   const [blacklistingChildId, setBlacklistingChildId] = useState(null);
   const [blacklistReasonText, setBlacklistReasonText] = useState('');
+
+  const { showConfirm, showAlert } = useModal();
 
   const loadData = async () => {
       try {
@@ -566,39 +660,43 @@ function AdminDashboard({ fetchAPI, token, handleLogout }) {
   const changeStatus = async (id, status, reason = '') => {
       try {
           await fetchAPI(`/admin/applications/${id}/status`, { method: 'PUT', body: JSON.stringify({ status_id: status, rejection_reason: reason }) });
+          showAlert('Статус успешно изменен!');
           loadData();
-      } catch (e) { alert(e.message); }
+      } catch (e) { showAlert('Ошибка: ' + e.message); }
   };
 
   const toggleBlacklist = async (childId, isListed, reasonFromInput = '') => {
       if (isListed) {
-          if (!window.confirm('Вы уверены, что хотите убрать ребенка из Черного списка?')) return;
+          showConfirm('Убрать из Черного списка?', 'Вы уверены, что хотите снять блокировку с этого ребенка?', async () => {
+              try {
+                  await fetchAPI(`/admin/children/${childId}/blacklist`, { method: 'PUT', body: JSON.stringify({ is_blacklisted: false, blacklist_reason: null }) });
+                  showAlert('Ребенок убран из ЧС'); setBlacklistingChildId(null); setBlacklistReasonText(''); loadData();
+              } catch (e) { showAlert(e.message); }
+          });
+          return;
       }
 
       try {
           await fetchAPI(`/admin/children/${childId}/blacklist`, { 
               method: 'PUT', 
               body: JSON.stringify({ 
-                  is_blacklisted: !isListed, 
-                  blacklist_reason: isListed ? null : (reasonFromInput.trim() || 'Причина не указана менеджером') 
+                  is_blacklisted: true, 
+                  blacklist_reason: reasonFromInput.trim() || 'Причина не указана менеджером' 
               }) 
           });
-          
-          alert(isListed ? 'Ребенок убран из ЧС' : 'Ребенок добавлен в Черный список');
+          showAlert('Ребенок добавлен в Черный список');
           setBlacklistingChildId(null);
           setBlacklistReasonText('');
           loadData();
-      } catch (e) { 
-          alert('Ошибка сервера: ' + e.message); 
-      }
+      } catch (e) { showAlert(e.message); }
   };
 
   const handleAddShift = async (e) => {
       e.preventDefault();
       try {
           await fetchAPI('/admin/shifts', { method: 'POST', body: JSON.stringify(shiftForm) });
-          alert('Смена создана!'); setShiftForm({ program_name: '', shift_code: '', start_date: '', end_date: '', capacity: '' }); loadData();
-      } catch (e) { alert(e.message); }
+          showAlert('Смена успешно создана!'); setShiftForm({ program_name: '', shift_code: '', start_date: '', end_date: '', capacity: '' }); loadData();
+      } catch (e) { showAlert(e.message); }
   };
 
   const handleExportExcel = async () => {
@@ -607,7 +705,7 @@ function AdminDashboard({ fetchAPI, token, handleLogout }) {
           const blob = await res.blob();
           const url = window.URL.createObjectURL(blob);
           const link = document.createElement('a'); link.href = url; link.download = 'Реестр_Смена.xlsx'; link.click();
-      } catch(e) { alert('Ошибка выгрузки Excel'); }
+      } catch(e) { showAlert('Ошибка выгрузки Excel'); }
   };
 
   const toggleExpandInfo = async (app) => {
@@ -681,7 +779,7 @@ function AdminDashboard({ fetchAPI, token, handleLogout }) {
                   </div>
               </div>
               
-              <div className="table-container">
+              <div className="table-responsive">
                   <table className="modern-table">
                       <thead>
                           <tr>
@@ -716,7 +814,11 @@ function AdminDashboard({ fetchAPI, token, handleLogout }) {
                                               {app.status_name?.includes('работ') && (
                                                   <>
                                                       <button className="btn btn-sm btn-success" onClick={() => changeStatus(app.app_id, 2)}>✔</button>
-                                                      <button className="btn btn-sm btn-danger" onClick={() => { const r = prompt('Причина отказа:'); if(r) changeStatus(app.app_id, 3, r); }}>✖</button>
+                                                      <button className="btn btn-sm btn-danger" onClick={() => { 
+                                                          // Единственный prompt, который мы оставили — для причины отказа по заявке
+                                                          const r = prompt('Причина отклонения заявки:'); 
+                                                          if(r) changeStatus(app.app_id, 3, r); 
+                                                      }}>✖</button>
                                                   </>
                                               )}
                                               
@@ -790,5 +892,3 @@ function AdminDashboard({ fetchAPI, token, handleLogout }) {
       </div>
   );
 }
-
-export default App;
