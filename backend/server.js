@@ -351,11 +351,12 @@ app.delete('/api/documents/:id', auth, async (req, res) => {
 // ==========================================
 
 // Подать новую заявку на смену 
+// Подать новую заявку на смену (Умная проверка мест, ЧС и ДОКУМЕНТОВ)
 app.post('/api/applications', auth, async (req, res) => {
     try {
         const { child_id, shift_id, season, accommodation_type, shift_number, friend_request } = req.body;
 
-        // --- ПРОВЕРКА FR-12: Черный список ---
+        // --- ПРОВЕРКА 1: Черный список ---
         const childCheck = await pool.query(
             'SELECT is_blacklisted, blacklist_reason FROM children WHERE child_id = $1 AND parent_id = $2',
             [child_id, req.user.user_id]
@@ -368,12 +369,25 @@ app.post('/api/applications', auth, async (req, res) => {
             });
         }
 
-        // --- ПРОВЕРКА FR-09: Контроль свободных мест ---
+        // --- ПРОВЕРКА 2: Наличие всех обязательных документов (FR-05) ---
+        const docsCheck = await pool.query('SELECT document_type FROM documents WHERE child_id = $1', [child_id]);
+        const uploadedTypes = docsCheck.rows.map(d => d.document_type);
+        const requiredTypes = ['Свидетельство о рождении', 'Полис ОМС', 'Мед. справка 079/у'];
+        
+        // Ищем, каких обязательных документов не хватает
+        const missingDocs = requiredTypes.filter(type => !uploadedTypes.includes(type));
+
+        if (missingDocs.length > 0) {
+            return res.status(400).json({ 
+                error: `Отказ системы! Для подачи заявки необходимо загрузить недостающие документы: ${missingDocs.join(', ')}` 
+            });
+        }
+
+        // --- ПРОВЕРКА 3: Контроль свободных мест ---
         const shiftData = await pool.query('SELECT capacity FROM shifts WHERE shift_id = $1', [shift_id]);
         if (shiftData.rows.length === 0) return res.status(404).json({ error: 'Указанная смена не найдена.' });
         const maxCapacity = shiftData.rows[0].capacity;
 
-        // Считаем активные заявки на эту смену (В работе, Одобрено, Оплачено)
         const countApps = await pool.query(
             'SELECT COUNT(*) FROM applications WHERE shift_id = $1 AND status_id IN (1, 2, 4)', 
             [shift_id]

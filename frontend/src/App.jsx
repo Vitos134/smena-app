@@ -118,7 +118,7 @@ function AuthScreen({ setToken, setUserRole, fetchAPI }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [message, setMessage] = useState('');
-  const [pdConsent, setPdConsent] = useState(false); // FR-06: Согласие ПД
+  const [pdConsent, setPdConsent] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -373,7 +373,8 @@ function Children({ fetchAPI }) {
                           </div>
 
                           <div style={{ marginTop: '15px', padding: '15px', backgroundColor: '#f8fafc', borderRadius: '10px' }}>
-                              <h4>📎 Документы</h4>
+                              <h4 style={{margin: '0 0 10px 0'}}>📎 Обязательные документы для заявки:</h4>
+                              <p style={{fontSize: '13px', color: '#666', marginTop: 0}}>Свидетельство о рождении, Полис ОМС, Мед. справка 079/у</p>
                               <ul style={{ listStyleType: 'none', padding: 0 }}>
                                   {(documents[child.child_id] || []).map(doc => (
                                       <li key={doc.document_id} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px', background: '#fff', border: '1px solid #ddd', marginBottom: '5px', borderRadius: '6px' }}>
@@ -384,7 +385,7 @@ function Children({ fetchAPI }) {
                               </ul>
                               <div className="form-row" style={{ marginTop: '10px', alignItems: 'center' }}>
                                   <select className="form-input" style={{marginBottom: 0}} value={uploadTypes[child.child_id] || ""} onChange={(e) => setUploadTypes({...uploadTypes, [child.child_id]: e.target.value})}>
-                                      <option value="" disabled>-- Тип --</option>
+                                      <option value="" disabled>-- Выберите тип --</option>
                                       <option value="Свидетельство о рождении">Свидетельство о рождении</option>
                                       <option value="Полис ОМС">Полис ОМС</option>
                                       <option value="Мед. справка 079/у">Мед. справка 079/у</option>
@@ -425,7 +426,8 @@ function Applications({ fetchAPI }) {
       e.preventDefault();
       try {
           await fetchAPI('/applications', { method: 'POST', body: JSON.stringify(form) });
-          alert('Заявка подана!'); loadData();
+          alert('Заявка успешно подана! Ожидайте подтверждения менеджера.'); 
+          loadData();
           setForm({ child_id: '', shift_id: '', season: '', accommodation_type: '', friend_request: '' });
       } catch (err) { alert(err.message); }
   };
@@ -496,14 +498,19 @@ function Applications({ fetchAPI }) {
           <div className="table-container">
             <table className="modern-table">
                 <thead>
-                    <tr><th>Ребенок</th><th>Смена</th><th>Статус</th><th style={{textAlign: 'center'}}>Действия</th></tr>
+                    <tr>
+                        <th style={{textAlign: 'center'}}>Ребенок</th>
+                        <th style={{textAlign: 'center'}}>Смена</th>
+                        <th style={{textAlign: 'center'}}>Статус</th>
+                        <th style={{textAlign: 'center'}}>Действия</th>
+                    </tr>
                 </thead>
                 <tbody>
                     {apps.length === 0 ? <tr><td colSpan="4" style={{textAlign: 'center', color: '#666'}}>Заявок пока нет.</td></tr> : apps.map(app => (
                         <tr key={app.app_id}>
-                            <td><strong>{app.fio}</strong></td>
-                            <td>{app.code} <div style={{fontSize: '12px', color: '#666'}}>{app.accommodation_type}</div></td>
-                            <td>
+                            <td style={{textAlign: 'center'}}><strong>{app.fio}</strong></td>
+                            <td style={{textAlign: 'center'}}>{app.code} <div style={{fontSize: '12px', color: '#666'}}>{app.accommodation_type}</div></td>
+                            <td style={{textAlign: 'center'}}>
                                 <span className="badge" style={{ backgroundColor: getBadgeColor(app.status_name) }}>{app.status_name}</span>
                                 {app.rejection_reason && <div style={{color:'var(--danger)', fontSize:'12px', marginTop:'5px'}}>Отказ: {app.rejection_reason}</div>}
                                 {app.card_mask && <div style={{color:'var(--success)', fontSize:'12px', marginTop:'5px', fontWeight:'bold'}}>Оплачено: {app.amount} ₽</div>}
@@ -534,6 +541,14 @@ function AdminDashboard({ fetchAPI, token, handleLogout }) {
   const [shifts, setShifts] = useState([]);
   const [showReport, setShowReport] = useState(false);
   const [shiftForm, setShiftForm] = useState({ program_name: '', shift_code: '', start_date: '', end_date: '', capacity: '' });
+  
+  // Состояния для развертывания информации о ребенке
+  const [expandedApp, setExpandedApp] = useState(null);
+  const [childDocs, setChildDocs] = useState([]);
+
+  // Состояния для инлайн-ЧС (Опциональный ввод)
+  const [blacklistingChildId, setBlacklistingChildId] = useState(null);
+  const [blacklistReasonText, setBlacklistReasonText] = useState('');
 
   const loadData = async () => {
       try {
@@ -555,13 +570,27 @@ function AdminDashboard({ fetchAPI, token, handleLogout }) {
       } catch (e) { alert(e.message); }
   };
 
-  const toggleBlacklist = async (childId, isListed) => {
-      const reason = isListed ? '' : prompt('Укажите причину для ЧС:');
-      if (!isListed && !reason) return;
+  const toggleBlacklist = async (childId, isListed, reasonFromInput = '') => {
+      if (isListed) {
+          if (!window.confirm('Вы уверены, что хотите убрать ребенка из Черного списка?')) return;
+      }
+
       try {
-          await fetchAPI(`/admin/children/${childId}/blacklist`, { method: 'PUT', body: JSON.stringify({ is_blacklisted: !isListed, blacklist_reason: reason }) });
+          await fetchAPI(`/admin/children/${childId}/blacklist`, { 
+              method: 'PUT', 
+              body: JSON.stringify({ 
+                  is_blacklisted: !isListed, 
+                  blacklist_reason: isListed ? null : (reasonFromInput.trim() || 'Причина не указана менеджером') 
+              }) 
+          });
+          
+          alert(isListed ? 'Ребенок убран из ЧС' : 'Ребенок добавлен в Черный список');
+          setBlacklistingChildId(null);
+          setBlacklistReasonText('');
           loadData();
-      } catch (e) { alert(e.message); }
+      } catch (e) { 
+          alert('Ошибка сервера: ' + e.message); 
+      }
   };
 
   const handleAddShift = async (e) => {
@@ -579,6 +608,18 @@ function AdminDashboard({ fetchAPI, token, handleLogout }) {
           const url = window.URL.createObjectURL(blob);
           const link = document.createElement('a'); link.href = url; link.download = 'Реестр_Смена.xlsx'; link.click();
       } catch(e) { alert('Ошибка выгрузки Excel'); }
+  };
+
+  const toggleExpandInfo = async (app) => {
+      if (expandedApp === app.app_id) {
+          setExpandedApp(null);
+      } else {
+          try {
+              const docs = await fetchAPI(`/documents/${app.child_id}`);
+              setChildDocs(docs);
+              setExpandedApp(app.app_id);
+          } catch(e) { console.error(e); }
+      }
   };
 
   if (showReport) {
@@ -642,35 +683,105 @@ function AdminDashboard({ fetchAPI, token, handleLogout }) {
               
               <div className="table-container">
                   <table className="modern-table">
-                      <thead><tr><th>ID</th><th>Ребенок</th><th>Смена / Друзья</th><th>Статус</th><th style={{textAlign: 'center'}}>Действия</th></tr></thead>
+                      <thead>
+                          <tr>
+                              <th style={{textAlign: 'center'}}>ID</th>
+                              <th style={{textAlign: 'center'}}>Ребенок</th>
+                              <th style={{textAlign: 'center'}}>Смена / Друзья</th>
+                              <th style={{textAlign: 'center'}}>Статус</th>
+                              <th style={{textAlign: 'center'}}>Действия</th>
+                          </tr>
+                      </thead>
                       <tbody>
                           {apps.map(app => (
-                              <tr key={app.app_id} style={{ background: app.is_blacklisted ? '#fff3f3' : '' }}>
-                                  <td><strong>{app.app_id}</strong></td>
-                                  <td>
-                                      <strong>{app.child_fio}</strong><br/>
-                                      <span style={{ fontSize: '12px', color: '#666' }}>{formatSnils(app.snils)}</span>
-                                      {app.is_blacklisted && <span style={{color:'var(--danger)', display:'block', fontSize:'12px', fontWeight:'bold'}}>[ЧС] {app.blacklist_reason}</span>}
-                                  </td>
-                                  <td>{app.shift_code} <br/><span style={{fontSize:'12px', color: '#666'}}>Друг: {app.friend_request || '-'}</span></td>
-                                  <td>
-                                      <span className="badge" style={{ backgroundColor: getBadgeColor(app.status_name) }}>{app.status_name}</span>
-                                      {app.payment_amount && <div style={{fontSize:'12px', marginTop:'5px', color:'var(--success)', fontWeight:'bold'}}>{app.payment_amount} ₽</div>}
-                                  </td>
-                                  <td style={{textAlign: 'center'}}>
-                                      <div className="action-buttons" style={{justifyContent: 'center'}}>
-                                          {app.status_name?.includes('работ') && (
-                                              <>
-                                                  <button className="btn btn-sm btn-success" onClick={() => changeStatus(app.app_id, 2)}>✔</button>
-                                                  <button className="btn btn-sm btn-danger" onClick={() => { const r = prompt('Причина отказа:'); if(r) changeStatus(app.app_id, 3, r); }}>✖</button>
-                                              </>
-                                          )}
-                                          <button className={`btn btn-sm ${app.is_blacklisted ? 'btn-secondary' : 'btn-danger'}`} onClick={() => toggleBlacklist(app.child_id, app.is_blacklisted)}>
-                                              {app.is_blacklisted ? 'Из ЧС' : 'В ЧС'}
-                                          </button>
-                                      </div>
-                                  </td>
-                              </tr>
+                              <React.Fragment key={app.app_id}>
+                                  <tr style={{ background: app.is_blacklisted ? '#fff3f3' : '' }}>
+                                      <td style={{textAlign: 'center'}}><strong>{app.app_id}</strong></td>
+                                      <td style={{textAlign: 'center'}}>
+                                          <strong>{app.child_fio}</strong><br/>
+                                          <span style={{ fontSize: '12px', color: '#666' }}>{formatSnils(app.snils)}</span>
+                                          {app.is_blacklisted && <span style={{color:'var(--danger)', display:'block', fontSize:'12px', fontWeight:'bold'}}>[ЧС] {app.blacklist_reason}</span>}
+                                      </td>
+                                      <td style={{textAlign: 'center'}}>{app.shift_code} <br/><span style={{fontSize:'12px', color: '#666'}}>Друг: {app.friend_request || '-'}</span></td>
+                                      <td style={{textAlign: 'center'}}>
+                                          <span className="badge" style={{ backgroundColor: getBadgeColor(app.status_name) }}>{app.status_name}</span>
+                                          {app.payment_amount && <div style={{fontSize:'12px', marginTop:'5px', color:'var(--success)', fontWeight:'bold'}}>{app.payment_amount} ₽</div>}
+                                      </td>
+                                      <td style={{textAlign: 'center'}}>
+                                          <div className="action-buttons" style={{justifyContent: 'center'}}>
+                                              <button className="btn btn-sm btn-primary" onClick={() => toggleExpandInfo(app)}>
+                                                  {expandedApp === app.app_id ? 'Скрыть инфо' : 'ℹ️ Инфо'}
+                                              </button>
+                                              
+                                              {app.status_name?.includes('работ') && (
+                                                  <>
+                                                      <button className="btn btn-sm btn-success" onClick={() => changeStatus(app.app_id, 2)}>✔</button>
+                                                      <button className="btn btn-sm btn-danger" onClick={() => { const r = prompt('Причина отказа:'); if(r) changeStatus(app.app_id, 3, r); }}>✖</button>
+                                                  </>
+                                              )}
+                                              
+                                              {/* Умная инлайн кнопка ЧС */}
+                                              {app.is_blacklisted ? (
+                                                  <button className="btn btn-sm btn-secondary" onClick={() => toggleBlacklist(app.child_id, true)}>Из ЧС</button>
+                                              ) : (
+                                                  blacklistingChildId === app.child_id ? (
+                                                      <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', marginTop: '5px' }}>
+                                                          <input 
+                                                              className="form-input" 
+                                                              style={{ padding: '6px', marginBottom: '0', fontSize: '13px' }} 
+                                                              type="text" 
+                                                              placeholder="Причина (опционально)" 
+                                                              value={blacklistReasonText} 
+                                                              onChange={(e) => setBlacklistReasonText(e.target.value)} 
+                                                          />
+                                                          <div className="action-buttons" style={{ justifyContent: 'center' }}>
+                                                              <button className="btn btn-sm btn-danger" onClick={() => toggleBlacklist(app.child_id, false, blacklistReasonText)}>Ок</button>
+                                                              <button className="btn btn-sm btn-secondary" onClick={() => { setBlacklistingChildId(null); setBlacklistReasonText(''); }}>Отмена</button>
+                                                          </div>
+                                                      </div>
+                                                  ) : (
+                                                      <button className="btn btn-sm btn-warning" onClick={() => { setBlacklistingChildId(app.child_id); setBlacklistReasonText(''); }}>В ЧС</button>
+                                                  )
+                                              )}
+                                          </div>
+                                      </td>
+                                  </tr>
+                                  {expandedApp === app.app_id && (
+                                      <tr style={{ backgroundColor: '#f8fafc' }}>
+                                          <td colSpan="5" style={{ padding: '20px' }}>
+                                              <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', textAlign: 'left' }}>
+                                                  <div style={{ flex: 1, minWidth: '250px' }}>
+                                                      <h4 style={{ color: 'var(--primary)', borderBottom: '2px solid #e2e8f0', paddingBottom: '8px' }}>👶 Данные ребенка</h4>
+                                                      <p><strong>Дата рождения:</strong> {new Date(app.birth_date).toLocaleDateString('ru-RU')}</p>
+                                                      <p><strong>СНИЛС:</strong> {formatSnils(app.snils)}</p>
+                                                      <p><strong>ОМС:</strong> {formatOms(app.oms)}</p>
+                                                      <p><strong>Адрес:</strong> {app.child_address || 'Нет данных'}</p>
+                                                      <p><strong>Доп. инфо:</strong> {app.additional_info || 'Нет данных'}</p>
+                                                  </div>
+                                                  <div style={{ flex: 1, minWidth: '250px' }}>
+                                                      <h4 style={{ color: 'var(--primary)', borderBottom: '2px solid #e2e8f0', paddingBottom: '8px' }}>👨‍👩‍👦 Заявитель</h4>
+                                                      <p><strong>ФИО:</strong> {app.parent_fio}</p>
+                                                      <p><strong>Телефон:</strong> {app.parent_phone || 'Не указан'}</p>
+                                                      <p><strong>Email:</strong> {app.parent_email}</p>
+                                                      <p><strong>Адрес:</strong> {app.parent_address || 'Не указан'}</p>
+                                                  </div>
+                                                  <div style={{ flex: 1, minWidth: '250px' }}>
+                                                      <h4 style={{ color: 'var(--primary)', borderBottom: '2px solid #e2e8f0', paddingBottom: '8px' }}>📎 Документы</h4>
+                                                      {childDocs.length > 0 ? (
+                                                          <ul style={{ listStyleType: 'none', padding: 0, margin: 0 }}>
+                                                              {childDocs.map(doc => (
+                                                                  <li key={doc.document_id} style={{ marginBottom: '8px' }}>
+                                                                      📄 <a href={`http://localhost:5000${doc.file_path}`} target="_blank" rel="noreferrer" style={{color: 'var(--primary)', fontWeight: 'bold', textDecoration: 'none'}}>{doc.document_type}</a>
+                                                                  </li>
+                                                              ))}
+                                                          </ul>
+                                                      ) : <p style={{color: '#666', fontSize: '14px'}}>Документы не загружены</p>}
+                                                  </div>
+                                              </div>
+                                          </td>
+                                      </tr>
+                                  )}
+                              </React.Fragment>
                           ))}
                       </tbody>
                   </table>
