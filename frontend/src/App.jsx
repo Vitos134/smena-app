@@ -262,7 +262,7 @@ function App() {
       });
       const data = await res.json();
       if (res.ok) {
-        setChildren([...children, data.child]); 
+        setChildren([...children, data]);
         setNewFio(''); setNewBirthDate(''); setNewSnils(''); setNewOms(''); setNewAdditionalInfo(''); setNewChildAddress(''); setShowAddForm(false);
       } else { setFormError(data.error); }
     } catch (err) { setFormError('Ошибка связи с сервером.'); }
@@ -464,7 +464,7 @@ function App() {
       <div className="auth-wrapper">
         <div className="auth-box">
             <h1 style={{ color: '#000', marginBottom: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', fontSize: '28px' }}>
-                <span>🏕️</span> Лагерь "Орленок"
+                <span>🏕️</span> Лагерь "Смена"
             </h1>
             <h2 style={{ fontSize: '18px', color: 'var(--text-muted)', marginBottom: '25px', fontWeight: '600' }}>
                 {isResetMode ? 'Восстановление пароля' : (isRegisterMode ? 'Создание аккаунта' : 'Вход в личный кабинет')}

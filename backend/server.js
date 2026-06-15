@@ -1,27 +1,34 @@
 require('dotenv').config(); 
 const express = require('express');
 const cors = require('cors');
-const bcrypt = require('bcryptjs');
+const bcrypt = require('bcrypt'); // Используем bcrypt, который мы уже установили
 const jwt = require('jsonwebtoken');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const pool = require('./db'); 
-const auth = require('./auth'); 
+const { Pool } = require('pg');
 const dns = require('dns');
 const dnsPromises = dns.promises;
 
 // Принудительно заставляем Node.js использовать публичные DNS Google
-// Это решает проблему ECONNREFUSED на локальных компьютерах
 dns.setServers(['8.8.8.8', '8.8.4.4']);
 
 const app = express();
 
 // ==========================================
-// БАЗОВЫЕ НАСТРОЙКИ СЕРВЕРА
+// БАЗОВЫЕ НАСТРОЙКИ СЕРВЕРА И БД
 // ==========================================
 app.use(cors()); 
 app.use(express.json()); 
+
+// Подключение к БД напрямую здесь (заменяет старый ./db.js)
+const pool = new Pool({
+    user: process.env.DB_USER || 'postgres',
+    host: process.env.DB_HOST || 'localhost',
+    database: process.env.DB_NAME || 'smena_db',
+    password: process.env.DB_PASSWORD || 'Jndfkbrjpkbyf214', // 
+    port: process.env.DB_PORT || 5432,
+});
 
 // Настройка папки для загрузки файлов (Multer)
 const uploadDir = path.join(__dirname, 'uploads');
@@ -35,32 +42,41 @@ const storage = multer.diskStorage({
         cb(null, uploadDir);
     },
     filename: function (req, file, cb) {
-        cb(null, Date.now() + '-' + file.originalname);
+        // Защита от кириллицы в названиях файлов
+        cb(null, Date.now() + '-' + Buffer.from(file.originalname, 'latin1').toString('utf8'));
     }
 });
 const upload = multer({ storage: storage });
 
+// Наша прослойка авторизации (заменяет старый ./auth.js)
+const auth = (req, res, next) => {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    if (!token) return res.status(401).json({ error: 'Доступ запрещен, токен не предоставлен' });
+
+    jwt.verify(token, process.env.JWT_SECRET || 'secret_key', (err, user) => {
+        if (err) return res.status(403).json({ error: 'Неверный или просроченный токен' });
+        req.user = user;
+        next();
+    });
+};
 
 // ==========================================
 // 1. МАРШРУТЫ АВТОРИЗАЦИИ
 // ==========================================
 
-// --- РЕГИСТРАЦИЯ С УМНОЙ ПРОВЕРКОЙ ДОМЕНА И ТРАНЗАКЦИЯМИ ---
+// Регистрация с DNS-проверкой и транзакциями
 app.post('/api/register', async (req, res) => {
-    // Выделяем отдельного "клиента" базы данных для транзакции
     const client = await pool.connect();
-
     try {
         const { email, password } = req.body;
-
-        // 1. Проверяем формат и вытаскиваем домен
         const emailParts = email.split('@');
         if (emailParts.length !== 2) {
             return res.status(400).json({ error: 'Неверный формат email.' });
         }
         const domain = emailParts[1];
 
-        // 2. DNS-запрос: спрашиваем у интернета, существует ли домен
+        // DNS-запрос
         try {
             const mxRecords = await dnsPromises.resolveMx(domain);
             if (!mxRecords || mxRecords.length === 0) {
@@ -73,42 +89,25 @@ app.post('/api/register', async (req, res) => {
             console.warn('Сбой при проверке DNS. Пропускаем:', dnsErr.message);
         }
 
-        // ==========================================
-        // 3. НАЧАЛО ТРАНЗАКЦИИ (Защита от мусорных данных)
-        // ==========================================
-        await client.query('BEGIN');
-
-        // Шаг А: Создаем пользователя
+        await client.query('BEGIN'); // Старт транзакции
         const hashedPassword = await bcrypt.hash(password, 10);
+        
+        // Создаем пользователя (убрал ошибочный UPDATE, который тут был раньше)
         const newUser = await client.query(
             'INSERT INTO users (email, password_hash, role_id) VALUES ($1, $2, 1) RETURNING *', 
             [email, hashedPassword]
         );
 
-        // Шаг Б: Создаем профиль (Передаем пустые строки, чтобы избежать ошибки NOT NULL)
-        await client.query(
-            'INSERT INTO profiles (user_id, fio, phone, address) VALUES ($1, $2, $3, $4)', 
-            [newUser.rows[0].user_id, '', '', '']
-        );
-
-        // Шаг В: Если обе команды прошли успешно — сохраняем всё!
-        await client.query('COMMIT');
-        // ==========================================
-
+        await client.query('COMMIT'); // Успех!
         res.status(201).json({ message: 'Регистрация успешна!' });
     } catch (err) {
-        // ЕСЛИ БЫЛА ОШИБКА (на любом шаге) — ОТМЕНЯЕМ И УДАЛЯЕМ ПОЛЬЗОВАТЕЛЯ ИЗ БАЗЫ!
-        await client.query('ROLLBACK');
-
+        await client.query('ROLLBACK'); // Откат в случае ошибки
         console.error('Ошибка регистрации:', err.message);
         if (err.code === '23505') { 
             return res.status(400).json({ error: 'Пользователь с таким Email уже существует!' });
         }
-        
-        // ВЫВОДИМ ТОЧНУЮ ОШИБКУ, ЧТОБЫ НЕ ГАДАТЬ
         res.status(500).json({ error: 'Ошибка сервера: ' + err.message });
     } finally {
-        // Обязательно возвращаем клиента обратно пулу (освобождаем память)
         client.release();
     }
 });
@@ -127,9 +126,10 @@ app.post('/api/login', async (req, res) => {
             return res.status(400).json({ error: 'Неверная почта или пароль' });
         }
 
+        // ВАЖНО: сохраняем user_id в токен, чтобы работало везде
         const token = jwt.sign(
-            { userId: user.rows[0].user_id, roleId: user.rows[0].role_id }, 
-            process.env.JWT_SECRET, 
+            { user_id: user.rows[0].user_id, role_id: user.rows[0].role_id }, 
+            process.env.JWT_SECRET || 'secret_key', 
             { expiresIn: '24h' }
         );
         
@@ -143,19 +143,14 @@ app.post('/api/login', async (req, res) => {
 app.post('/api/reset-password', async (req, res) => {
     try {
         const { email, newPassword } = req.body;
-        
         const user = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+        
         if (user.rows.length === 0) {
             return res.status(404).json({ error: 'Пользователь с таким email не найден в системе!' });
         }
 
-        const salt = await bcrypt.genSalt(10);
-        const hashedPassword = await bcrypt.hash(newPassword, salt);
-
-        await pool.query(
-            'UPDATE users SET password_hash = $1 WHERE email = $2',
-            [hashedPassword, email]
-        );
+        const hashedPassword = await bcrypt.hash(newPassword, 10);
+        await pool.query('UPDATE users SET password_hash = $1 WHERE email = $2', [hashedPassword, email]);
 
         res.json({ message: 'Пароль успешно изменен! Теперь вы можете войти.' });
     } catch (err) {
@@ -166,14 +161,13 @@ app.post('/api/reset-password', async (req, res) => {
 
 
 // ==========================================
-// 2. МАРШРУТЫ ПРОФИЛЯ РОДИТЕЛЯ
+// 2. ПРОФИЛЬ РОДИТЕЛЯ
 // ==========================================
-
 app.get('/api/profile', auth, async (req, res) => {
     try {
         const user = await pool.query(
             'SELECT email, phone, fio, address FROM users WHERE user_id = $1', 
-            [req.user.userId]
+            [req.user.user_id]
         );
         res.json(user.rows[0]);
     } catch (err) {
@@ -187,7 +181,7 @@ app.put('/api/profile', auth, async (req, res) => {
         const { fio, phone, address } = req.body;
         await pool.query(
             'UPDATE users SET fio = $1, phone = $2, address = $3 WHERE user_id = $4',
-            [fio, phone, address, req.user.userId]
+            [fio, phone, address, req.user.user_id]
         );
         res.json({ message: 'Профиль успешно обновлен!' });
     } catch (err) {
@@ -200,12 +194,11 @@ app.put('/api/profile', auth, async (req, res) => {
 // ==========================================
 // 3. МАРШРУТЫ РАБОТЫ С ДЕТЬМИ (CRUD)
 // ==========================================
-
 app.get('/api/children', auth, async (req, res) => {
     try {
         const children = await pool.query(
             'SELECT * FROM children WHERE parent_id = $1 ORDER BY child_id ASC', 
-            [req.user.userId]
+            [req.user.user_id]
         );
         res.json(children.rows);
     } catch (err) {
@@ -216,16 +209,24 @@ app.get('/api/children', auth, async (req, res) => {
 
 app.post('/api/children', auth, async (req, res) => {
     try {
-        const { fio, birth_date, snils, oms, additional_info, address } = req.body;
+        // Подсасывание адреса реализовано
+        let { fio, birth_date, snils, oms, additional_info, address } = req.body;
 
         const existingChild = await pool.query('SELECT * FROM children WHERE snils = $1', [snils]);
         if (existingChild.rows.length > 0) {
             return res.status(400).json({ error: 'Ребенок с таким СНИЛС уже добавлен в систему!' });
         }
 
+        if (!address || address.trim() === '') {
+            const parentData = await pool.query('SELECT address FROM users WHERE user_id = $1', [req.user.user_id]);
+            if (parentData.rows.length > 0 && parentData.rows[0].address) {
+                address = parentData.rows[0].address; 
+            }
+        }
+
         const newChild = await pool.query(
             'INSERT INTO children (parent_id, fio, birth_date, snils, oms, additional_info, address) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
-            [req.user.userId, fio, birth_date, snils, oms, additional_info, address]
+            [req.user.user_id, fio, birth_date, snils, oms, additional_info, address]
         );
         res.status(201).json({ message: 'Ребенок успешно добавлен', child: newChild.rows[0] });
     } catch (err) {
@@ -249,7 +250,7 @@ app.put('/api/children/:id', auth, async (req, res) => {
 
         const updatedChild = await pool.query(
             'UPDATE children SET fio = $1, birth_date = $2, snils = $3, oms = $4, additional_info = $5, address = $6 WHERE child_id = $7 AND parent_id = $8 RETURNING *',
-            [fio, birth_date, snils, oms, additional_info, address, id, req.user.userId]
+            [fio, birth_date, snils, oms, additional_info, address, id, req.user.user_id]
         );
         res.json({ message: 'Анкета успешно обновлена', child: updatedChild.rows[0] });
     } catch (err) {
@@ -261,11 +262,9 @@ app.put('/api/children/:id', auth, async (req, res) => {
 app.delete('/api/children/:id', auth, async (req, res) => {
     try {
         const { id } = req.params;
-        
         await pool.query('DELETE FROM documents WHERE child_id = $1', [id]);
         await pool.query('DELETE FROM applications WHERE child_id = $1', [id]);
-        await pool.query('DELETE FROM children WHERE child_id = $1 AND parent_id = $2', [id, req.user.userId]);
-        
+        await pool.query('DELETE FROM children WHERE child_id = $1 AND parent_id = $2', [id, req.user.user_id]);
         res.json({ message: 'Анкета ребенка успешно удалена' });
     } catch (err) {
         console.error('Ошибка удаления ребенка:', err.message);
@@ -277,15 +276,10 @@ app.delete('/api/children/:id', auth, async (req, res) => {
 // ==========================================
 // 4. СМЕНЫ И ДОКУМЕНТЫ
 // ==========================================
-
 app.get('/api/shifts', async (req, res) => {
     try {
-        const query = `
-            SELECT s.shift_id, s.start_date, s.end_date, s.price, p.name as program_name 
-            FROM shifts s 
-            JOIN programs p ON s.program_id = p.program_id
-        `;
-        const shifts = await pool.query(query);
+        // Запрос адаптирован: program_name теперь хранится прямо в shifts
+        const shifts = await pool.query('SELECT shift_id, start_date, end_date, shift_code, program_name FROM shifts');
         res.json(shifts.rows);
     } catch (err) {
         console.error('Ошибка получения смен:', err.message);
@@ -295,9 +289,7 @@ app.get('/api/shifts', async (req, res) => {
 
 app.post('/api/documents', auth, upload.single('file'), async (req, res) => {
     try {
-        if (!req.file) {
-            return res.status(400).json({ error: 'Файл не был загружен' });
-        }
+        if (!req.file) return res.status(400).json({ error: 'Файл не был загружен' });
         
         const fileUrl = '/uploads/' + req.file.filename;
         const newDoc = await pool.query(
@@ -313,10 +305,7 @@ app.post('/api/documents', auth, upload.single('file'), async (req, res) => {
 
 app.get('/api/documents/:childId', auth, async (req, res) => {
     try {
-        const docs = await pool.query(
-            'SELECT * FROM documents WHERE child_id = $1', 
-            [req.params.childId]
-        );
+        const docs = await pool.query('SELECT * FROM documents WHERE child_id = $1', [req.params.childId]);
         res.json(docs.rows);
     } catch (err) {
         console.error('Ошибка получения документов:', err.message);
@@ -327,15 +316,13 @@ app.get('/api/documents/:childId', auth, async (req, res) => {
 app.delete('/api/documents/:id', auth, async (req, res) => {
     try {
         const { id } = req.params;
-        
         const doc = await pool.query('SELECT * FROM documents WHERE document_id = $1', [id]);
         
         if (doc.rows.length > 0) {
             const filePath = path.join(__dirname, doc.rows[0].file_path);
             if (fs.existsSync(filePath)) {
-                fs.unlinkSync(filePath);
+                fs.unlinkSync(filePath); // Физически удаляем файл с компьютера
             }
-            
             await pool.query('DELETE FROM documents WHERE document_id = $1', [id]);
             res.json({ message: 'Документ успешно удален' });
         } else {
@@ -351,22 +338,18 @@ app.delete('/api/documents/:id', auth, async (req, res) => {
 // ==========================================
 // 5. ЗАЯВКИ РОДИТЕЛЯ
 // ==========================================
-
-// --- ПОДАЧА ЗАЯВКИ НА СМЕНУ (С ДИНАМИЧЕСКИМ РАСЧЕТОМ ЦЕНЫ) ---
 app.post('/api/applications', async (req, res) => {
     try {
         const { child_id, shift_id, season, accommodation_type, shift_number } = req.body;
         
-        // Серверный расчет стоимости в зависимости от комфорта
-        let price = 35000; // Базовая цена для стандарта
+        let price = 35000;
         if (accommodation_type === 'Корпус улучшенный') price = 45000;
         if (accommodation_type === 'Глэмпинг') price = 55000;
 
         const newApp = await pool.query(
-            `INSERT INTO applications 
-            (child_id, shift_id, season, accommodation_type, shift_number, price, status_id) 
+            `INSERT INTO applications (child_id, shift_id, season, accommodation_type, shift_number, price, status_id) 
             VALUES ($1, $2, $3, $4, $5, $6, 1) RETURNING *`,
-            [child_id, shift_id, season, accommodation_type, shift_number, price]
+            [child_id, shift_id, season, accommodation_type, shift_number || 1, price]
         );
         res.status(201).json({ message: 'Заявка успешно создана', application: newApp.rows[0] });
     } catch (err) {
@@ -375,28 +358,21 @@ app.post('/api/applications', async (req, res) => {
     }
 });
 
-// ИЗМЕНЕНО: Добавлено приклеивание чека (amount, card_mask, payment_date)
 app.get('/api/applications', auth, async (req, res) => {
     try {
+        // Запрос адаптирован: Оплата берется прямо из таблицы заявок
         const apps = await pool.query(`
             SELECT 
-                a.application_id as app_id, 
-                c.fio, 
-                s.code, 
-                s.price,
-                st.name as status_name, 
-                a.rejection_reason,
-                p.amount,
-                p.card_mask,
-                p.payment_date
+                a.app_id, c.fio, s.shift_code as code, a.price,
+                st.status_name, a.rejection_reason,
+                a.payment_amount as amount, a.card_mask, a.payment_date
             FROM applications a 
             JOIN children c ON a.child_id = c.child_id 
             JOIN shifts s ON a.shift_id = s.shift_id 
-            JOIN application_statuses st ON a.status_id = st.status_id 
-            LEFT JOIN payments p ON a.application_id = p.application_id
+            JOIN statuses st ON a.status_id = st.status_id 
             WHERE c.parent_id = $1 
-            ORDER BY a.application_id DESC
-        `, [req.user.userId]);
+            ORDER BY a.app_id DESC
+        `, [req.user.user_id]);
         res.json(apps.rows);
     } catch (err) {
         console.error('Ошибка получения заявок родителя:', err.message);
@@ -406,68 +382,46 @@ app.get('/api/applications', auth, async (req, res) => {
 
 app.delete('/api/applications/:id', auth, async (req, res) => {
     try {
-        const { id } = req.params;
-        
         const appCheck = await pool.query(`
-            SELECT a.application_id 
-            FROM applications a 
+            SELECT a.app_id FROM applications a 
             JOIN children c ON a.child_id = c.child_id 
-            WHERE a.application_id = $1 AND c.parent_id = $2
-        `, [id, req.user.userId]);
+            WHERE a.app_id = $1 AND c.parent_id = $2
+        `, [req.params.id, req.user.user_id]);
 
         if (appCheck.rows.length === 0) {
-            return res.status(403).json({ error: 'Заявка не найдена или у вас нет прав на ее отмену.' });
+            return res.status(403).json({ error: 'Заявка не найдена или нет прав на отмену.' });
         }
 
-        await pool.query('DELETE FROM applications WHERE application_id = $1', [id]);
+        await pool.query('DELETE FROM applications WHERE app_id = $1', [req.params.id]);
         res.json({ message: 'Заявка успешно отменена!' });
     } catch (err) {
         console.error('Ошибка отмены заявки:', err.message);
-        res.status(500).json({ error: 'Ошибка сервера при отмене заявки' });
+        res.status(500).json({ error: 'Ошибка сервера' });
     }
 });
 
 
 // ==========================================
-// 6. АДМИН-ПАНЕЛЬ (ТОЛЬКО ДЛЯ МЕНЕДЖЕРОВ)
+// 6. АДМИН-ПАНЕЛЬ (ДЛЯ МЕНЕДЖЕРОВ)
 // ==========================================
-
-// ИЗМЕНЕНО: Добавлено приклеивание чека (payment_amount, card_mask, payment_date)
 app.get('/api/admin/applications', auth, async (req, res) => {
     try {
-        if (req.user.roleId !== 2) {
-            return res.status(403).json({ error: 'Доступ запрещен.' });
-        }
+        if (req.user.role_id !== 2) return res.status(403).json({ error: 'Доступ запрещен.' });
         
         const apps = await pool.query(`
             SELECT 
-                a.application_id as app_id, 
-                a.rejection_reason, 
-                c.child_id, 
-                c.fio as child_fio, 
-                c.birth_date, 
-                c.snils, 
-                c.oms, 
-                c.additional_info, 
-                c.address as child_address, 
-                c.is_blacklisted, 
-                c.blacklist_reason, 
-                u.email as parent_email, 
-                u.phone as parent_phone, 
-                u.fio as parent_fio, 
-                u.address as parent_address, 
-                s.code as shift_code, 
-                st.name as status_name,
-                p.amount as payment_amount,
-                p.card_mask,
-                p.payment_date
+                a.app_id, a.rejection_reason, c.child_id, c.fio as child_fio, 
+                c.birth_date, c.snils, c.oms, c.additional_info, c.address as child_address, 
+                c.is_blacklisted, c.blacklist_reason, u.email as parent_email, 
+                u.phone as parent_phone, u.fio as parent_fio, u.address as parent_address, 
+                s.shift_code, st.status_name,
+                a.payment_amount, a.card_mask, a.payment_date
             FROM applications a 
             JOIN children c ON a.child_id = c.child_id 
             JOIN users u ON c.parent_id = u.user_id 
             JOIN shifts s ON a.shift_id = s.shift_id 
-            JOIN application_statuses st ON a.status_id = st.status_id 
-            LEFT JOIN payments p ON a.application_id = p.application_id
-            ORDER BY a.application_id DESC
+            JOIN statuses st ON a.status_id = st.status_id 
+            ORDER BY a.app_id DESC
         `);
         res.json(apps.rows);
     } catch (err) {
@@ -478,14 +432,11 @@ app.get('/api/admin/applications', auth, async (req, res) => {
 
 app.put('/api/admin/applications/:id/status', auth, async (req, res) => {
     try {
-        if (req.user.roleId !== 2) {
-            return res.status(403).json({ error: 'Доступ запрещен.' });
-        }
-        
+        if (req.user.role_id !== 2) return res.status(403).json({ error: 'Доступ запрещен.' });
         const { status_id, rejection_reason } = req.body;
 
         await pool.query(
-            'UPDATE applications SET status_id = $1, rejection_reason = $2 WHERE application_id = $3', 
+            'UPDATE applications SET status_id = $1, rejection_reason = $2 WHERE app_id = $3', 
             [status_id, rejection_reason || null, req.params.id]
         );
         res.json({ message: 'Статус успешно изменен!' });
@@ -497,10 +448,7 @@ app.put('/api/admin/applications/:id/status', auth, async (req, res) => {
 
 app.put('/api/admin/children/:id/blacklist', auth, async (req, res) => {
     try {
-        if (req.user.roleId !== 2) {
-            return res.status(403).json({ error: 'Доступ запрещен.' });
-        }
-        
+        if (req.user.role_id !== 2) return res.status(403).json({ error: 'Доступ запрещен.' });
         const { is_blacklisted, blacklist_reason } = req.body;
 
         await pool.query(
@@ -514,25 +462,32 @@ app.put('/api/admin/children/:id/blacklist', auth, async (req, res) => {
     }
 });
 
+app.post('/api/admin/shifts', async (req, res) => {
+    try {
+        const { program_name, shift_code, start_date, end_date } = req.body;
+        const result = await pool.query(
+            'INSERT INTO shifts (program_name, shift_code, start_date, end_date) VALUES ($1, $2, $3, $4) RETURNING *',
+            [program_name, shift_code, start_date, end_date]
+        );
+        res.status(201).json({ message: 'Смена добавлена', shift: result.rows[0] });
+    } catch (err) {
+        console.error('Ошибка добавления смены:', err.message);
+        res.status(500).json({ error: 'Ошибка сервера при добавлении смены.' });
+    }
+});
 
 // ==========================================
 // 7. СИСТЕМА ОПЛАТЫ (ЭКВАЙРИНГ)
 // ==========================================
-
 app.post('/api/payments', auth, async (req, res) => {
     try {
         const { application_id, amount, card_number } = req.body;
-        
         const cardMask = '**** **** **** ' + card_number.slice(-4);
 
+        // Обновляем заявку напрямую, так как таблица payments удалена из БД
         await pool.query(
-            'INSERT INTO payments (application_id, amount, card_mask) VALUES ($1, $2, $3)',
-            [application_id, amount, cardMask]
-        );
-
-        await pool.query(
-            'UPDATE applications SET status_id = 4 WHERE application_id = $1',
-            [application_id]
+            'UPDATE applications SET status_id = 4, payment_amount = $1, card_mask = $2, payment_date = NOW() WHERE app_id = $3',
+            [amount, cardMask, application_id]
         );
 
         res.json({ message: 'Оплата успешно прошла! Чек сохранен в системе.' });
@@ -542,31 +497,10 @@ app.post('/api/payments', auth, async (req, res) => {
     }
 });
 
-// --- ДОБАВЛЕНИЕ НОВОЙ СМЕНЫ МЕНЕДЖЕРОМ ---
-app.post('/api/admin/shifts', async (req, res) => {
-    try {
-        const { program_name, shift_code, start_date, end_date } = req.body;
-
-        if (!program_name || !shift_code || !start_date || !end_date) {
-            return res.status(400).json({ error: 'Пожалуйста, заполните все поля!' });
-        }
-
-        const result = await pool.query(
-            'INSERT INTO shifts (program_name, shift_code, start_date, end_date) VALUES ($1, $2, $3, $4) RETURNING *',
-            [program_name, shift_code, start_date, end_date]
-        );
-
-        res.status(201).json({ message: 'Смена успешно добавлена', shift: result.rows[0] });
-    } catch (err) {
-        console.error('Ошибка добавления смены:', err.message);
-        res.status(500).json({ error: 'Ошибка сервера при добавлении смены.' });
-    }
-});
-
 // ==========================================
 // ЗАПУСК СЕРВЕРА
 // ==========================================
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => { 
-    console.log(`Сервер запущен и слушает порт ${PORT}`); 
+    console.log(`Сервер "Смена" запущен и слушает порт ${PORT}`); 
 });
