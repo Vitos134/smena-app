@@ -4,7 +4,7 @@ import './App.css';
 const API_URL = 'http://localhost:5000/api';
 
 // ==========================================
-// КОНТЕКСТ ДЛЯ КАСТОМНЫХ УВЕДОМЛЕНИЙ (ЗАМЕНА ALERT И CONFIRM)
+// КОНТЕКСТ ДЛЯ КАСТОМНЫХ УВЕДОМЛЕНИЙ
 // ==========================================
 const ModalContext = createContext();
 
@@ -14,21 +14,18 @@ const ModalProvider = ({ children }) => {
     const [confirmConfig, setConfirmConfig] = useState(null);
     const [toastMessage, setToastMessage] = useState('');
 
-    // Замена window.confirm()
     const showConfirm = (title, message, onConfirm, confirmText = 'Да', cancelText = 'Отмена', danger = false) => {
         setConfirmConfig({ title, message, onConfirm, confirmText, cancelText, danger });
     };
 
-    // Замена alert()
     const showAlert = (message) => {
         setToastMessage(message);
-        setTimeout(() => setToastMessage(''), 3000); // Автоматически скрываем через 3 сек
+        setTimeout(() => setToastMessage(''), 3000); 
     };
 
     return (
         <ModalContext.Provider value={{ showConfirm, showAlert }}>
             {children}
-            {/* Отрисовка Confirm окна */}
             {confirmConfig && (
                 <div className="modal-overlay">
                     <div className="modal-content">
@@ -48,7 +45,6 @@ const ModalProvider = ({ children }) => {
                     </div>
                 </div>
             )}
-            {/* Отрисовка всплывающего Toast-Alert */}
             {toastMessage && (
                 <div className="toast-alert">{toastMessage}</div>
             )}
@@ -56,10 +52,24 @@ const ModalProvider = ({ children }) => {
     );
 };
 
-
 // ==========================================
 // ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ И МАСКИ
 // ==========================================
+const formatCardNumber = (value) => {
+    const digits = value.replace(/\D/g, ''); 
+    let formatted = '';
+    for (let i = 0; i < digits.length; i += 4) {
+        formatted += digits.substring(i, i + 4) + ' ';
+    }
+    return formatted.trim(); 
+};
+
+const formatExpiry = (value) => {
+    const digits = value.replace(/\D/g, '');
+    if (digits.length >= 2) return digits.substring(0, 2) + '/' + digits.substring(2, 4); 
+    return digits;
+};
+
 const formatDate = (value) => {
     const digits = value.replace(/\D/g, ''); 
     let formatted = '';
@@ -111,7 +121,7 @@ const getBadgeColor = (statusName) => {
 };
 
 // ==========================================
-// ГЛАВНЫЙ КОМПОНЕНТ APP
+// ГЛАВНЫЙ КОМПОНЕНТ ПРИЛОЖЕНИЯ
 // ==========================================
 function MainApp() {
   const [token, setToken] = useState(localStorage.getItem('token') || ''); 
@@ -196,7 +206,7 @@ function AuthScreen({ setToken, setUserRole, fetchAPI }) {
         } else if (isRegisterMode) {
             if (!pdConsent) return setMessage('Необходимо согласие на обработку ПД!');
             await fetchAPI('/register', { method: 'POST', body: JSON.stringify({ email, password }) });
-            showAlert('Регистрация успешна!');
+            showAlert('Регистрация успешна! Теперь вы можете войти.');
             setIsRegisterMode(false); setPassword(''); setMessage('');
         } else {
             const data = await fetchAPI('/login', { method: 'POST', body: JSON.stringify({ email, password }) });
@@ -515,7 +525,7 @@ function Applications({ fetchAPI }) {
           showAlert('Заявка успешно подана! Ожидайте подтверждения менеджера.'); 
           loadData();
           setForm({ child_id: '', shift_id: '', season: '', accommodation_type: '', friend_request: '' });
-      } catch (err) { showAlert(err.message); } // Ошибка отсутствия документов выведется тут красивым попапом
+      } catch (err) { showAlert(err.message); } 
   };
 
   const handlePayment = async (e) => {
@@ -545,10 +555,34 @@ function Applications({ fetchAPI }) {
                   <h2 style={{ color: 'var(--success)' }}>💳 Оплата путевки</h2>
                   <p>Сумма к оплате: <strong>{payingApp.price} руб.</strong></p>
                   <form onSubmit={handlePayment}>
-                      <input className="form-input" type="text" placeholder="Номер карты (16 цифр)" maxLength="19" value={card.number} onChange={e => setCard({...card, number: e.target.value})} required />
+                      <input 
+                          className="form-input" 
+                          type="text" 
+                          placeholder="Номер карты (16 цифр)" 
+                          maxLength="19" 
+                          value={card.number} 
+                          onChange={e => setCard({...card, number: formatCardNumber(e.target.value)})} 
+                          required 
+                      />
                       <div className="form-row">
-                          <input className="form-input" type="text" placeholder="ММ/ГГ" maxLength="5" value={card.expiry} onChange={e => setCard({...card, expiry: e.target.value})} required />
-                          <input className="form-input" type="password" placeholder="CVC" maxLength="3" value={card.cvc} onChange={e => setCard({...card, cvc: e.target.value})} required />
+                          <input 
+                              className="form-input" 
+                              type="text" 
+                              placeholder="ММ/ГГ" 
+                              maxLength="5" 
+                              value={card.expiry} 
+                              onChange={e => setCard({...card, expiry: formatExpiry(e.target.value)})} 
+                              required 
+                          />
+                          <input 
+                              className="form-input" 
+                              type="password" 
+                              placeholder="CVC" 
+                              maxLength="3" 
+                              value={card.cvc} 
+                              onChange={e => setCard({...card, cvc: e.target.value.replace(/\D/g, '')})} 
+                              required 
+                          />
                       </div>
                       <div className="action-buttons">
                         <button type="submit" className="btn btn-success">Подтвердить платеж</button>
@@ -611,7 +645,16 @@ function Applications({ fetchAPI }) {
                             <td style={{textAlign: 'center'}}>
                                 <span className="badge" style={{ backgroundColor: getBadgeColor(app.status_name) }}>{app.status_name}</span>
                                 {app.rejection_reason && <div style={{color:'var(--danger)', fontSize:'12px', marginTop:'5px'}}>Отказ: {app.rejection_reason}</div>}
-                                {app.card_mask && <div style={{color:'var(--success)', fontSize:'12px', marginTop:'5px', fontWeight:'bold'}}>Оплачено: {app.amount} ₽</div>}
+                                
+                                {/* Красивый чек родителя */}
+                                {app.card_mask && (
+                                    <div style={{ color:'var(--success)', fontSize:'12px', marginTop:'8px', background: '#f8fafc', padding: '8px', borderRadius: '6px', border: '1px solid #dcfce7' }}>
+                                        <strong>✅ Путевка оплачена</strong><br/>
+                                        Сумма: {app.amount || app.price} ₽<br/>
+                                        Карта: {app.card_mask}<br/>
+                                        Дата: {new Date(app.payment_date).toLocaleDateString('ru-RU')}
+                                    </div>
+                                )}
                             </td>
                             <td style={{textAlign: 'center'}}>
                                 <div className="action-buttons" style={{justifyContent: 'center'}}>
@@ -632,8 +675,11 @@ function Applications({ fetchAPI }) {
 // 5. ПАНЕЛЬ МЕНЕДЖЕРА
 // ==========================================
 function AdminDashboard({ fetchAPI, token, handleLogout }) {
+  const [adminTab, setAdminTab] = useState('apps'); // 'apps' или 'children'
+  
   const [apps, setApps] = useState([]);
   const [shifts, setShifts] = useState([]);
+  const [allChildren, setAllChildren] = useState([]); 
   const [showReport, setShowReport] = useState(false);
   const [shiftForm, setShiftForm] = useState({ program_name: '', shift_code: '', start_date: '', end_date: '', capacity: '' });
   
@@ -642,15 +688,41 @@ function AdminDashboard({ fetchAPI, token, handleLogout }) {
   const [blacklistingChildId, setBlacklistingChildId] = useState(null);
   const [blacklistReasonText, setBlacklistReasonText] = useState('');
 
+  // Фильтры заявок
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [shiftFilter, setShiftFilter] = useState('');
+  
+  // Фильтр детей
+  const [childSearch, setChildSearch] = useState('');
+
   const { showConfirm, showAlert } = useModal();
 
   const loadData = async () => {
       try {
           setApps(await fetchAPI('/admin/applications'));
           setShifts(await fetchAPI('/shifts'));
+          setAllChildren(await fetchAPI('/admin/children'));
       } catch (e) { console.error(e); }
   };
   useEffect(() => { loadData(); }, []);
+
+  // --- ЛОГИКА ФИЛЬТРАЦИИ ---
+  const uniqueShifts = Array.from(new Set(apps.map(app => app.shift_code))).filter(Boolean);
+
+  const filteredApps = apps.filter(app => {
+      const childFio = app.child_fio || ''; 
+      const matchesSearch = childFio.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesStatus = statusFilter === '' || app.status_name === statusFilter;
+      const matchesShift = shiftFilter === '' || app.shift_code === shiftFilter;
+      return matchesSearch && matchesStatus && matchesShift;
+  });
+
+  const filteredChildren = allChildren.filter(c => {
+      const childFio = c.child_fio || '';
+      const snils = c.snils || '';
+      return childFio.toLowerCase().includes(childSearch.toLowerCase()) || snils.includes(childSearch);
+  });
 
   const totalApps = apps.length;
   const inProgressApps = apps.filter(a => a.status_name?.includes('работ')).length;
@@ -732,7 +804,7 @@ function AdminDashboard({ fetchAPI, token, handleLogout }) {
               <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '20px' }} border="1" cellPadding="10">
                   <thead><tr style={{ background: '#eee' }}><th>ID</th><th>ФИО Ребенка</th><th>Смена</th><th>Статус</th><th>Оплата</th></tr></thead>
                   <tbody>
-                      {apps.map(a => <tr key={a.app_id}><td>{a.app_id}</td><td>{a.child_fio}</td><td>{a.shift_code}</td><td>{a.status_name}</td><td>{a.payment_amount || '-'}</td></tr>)}
+                      {filteredApps.map(a => <tr key={a.app_id}><td>{a.app_id}</td><td>{a.child_fio}</td><td>{a.shift_code}</td><td>{a.status_name}</td><td>{a.payment_amount || '-'}</td></tr>)}
                   </tbody>
               </table>
               <h3 style={{ textAlign: 'right', marginTop: '20px' }}>Итого выручка: {totalRevenue.toLocaleString('ru-RU')} руб.</h3>
@@ -754,79 +826,232 @@ function AdminDashboard({ fetchAPI, token, handleLogout }) {
               <div className="kpi-card kpi-purple"><h3>Выручка</h3><p>{totalRevenue.toLocaleString('ru-RU')} ₽</p></div>
           </div>
 
-          <div className="card" style={{ marginBottom: '20px' }}>
-              <h2>🌲 Создать смену</h2>
-              <form onSubmit={handleAddShift}>
-                  <div className="form-row">
-                      <input className="form-input" type="text" placeholder="Программа (например: IT-Смена)" value={shiftForm.program_name} onChange={e=>setShiftForm({...shiftForm, program_name: e.target.value})} required/>
-                      <input className="form-input" type="text" placeholder="Код (например: ЛЕТО-01)" value={shiftForm.shift_code} onChange={e=>setShiftForm({...shiftForm, shift_code: e.target.value})} required/>
-                  </div>
-                  <div className="form-row">
-                      <input className="form-input" type="date" value={shiftForm.start_date} onChange={e=>setShiftForm({...shiftForm, start_date: e.target.value})} required/>
-                      <input className="form-input" type="date" value={shiftForm.end_date} onChange={e=>setShiftForm({...shiftForm, end_date: e.target.value})} required/>
-                      <input className="form-input" type="number" placeholder="Лимит мест (по умолч. 30)" value={shiftForm.capacity} onChange={e=>setShiftForm({...shiftForm, capacity: e.target.value})}/>
-                  </div>
-                  <button className="btn btn-success">Добавить в систему</button>
-              </form>
+          <div className="tabs-container no-print" style={{ justifyContent: 'center', marginBottom: '30px' }}>
+              <button className={`tab-button ${adminTab === 'apps' ? 'active' : ''}`} onClick={() => setAdminTab('apps')}>📝 Заявки и Смены</button>
+              <button className={`tab-button ${adminTab === 'children' ? 'active' : ''}`} onClick={() => setAdminTab('children')}>👦👧 База всех детей</button>
           </div>
 
-          <div className="card">
-              <div className="tab-header" style={{ marginBottom: '15px' }}>
-                  <h2 style={{margin: 0}}>База заявок</h2>
-                  <div className="actions">
-                      <button className="btn btn-success" onClick={handleExportExcel}>📥 Excel</button>
-                      <button className="btn btn-primary" onClick={() => setShowReport(true)}>📄 PDF Отчет</button>
+          {adminTab === 'apps' && (
+              <>
+                  <div className="card" style={{ marginBottom: '20px' }}>
+                      <h2>🌲 Создать смену</h2>
+                      <form onSubmit={handleAddShift}>
+                          <div className="form-row">
+                              <input className="form-input" type="text" placeholder="Программа (например: IT-Смена)" value={shiftForm.program_name} onChange={e=>setShiftForm({...shiftForm, program_name: e.target.value})} required/>
+                              <input className="form-input" type="text" placeholder="Код (например: ЛЕТО-01)" value={shiftForm.shift_code} onChange={e=>setShiftForm({...shiftForm, shift_code: e.target.value})} required/>
+                          </div>
+                          <div className="form-row">
+                              <input className="form-input" type="date" value={shiftForm.start_date} onChange={e=>setShiftForm({...shiftForm, start_date: e.target.value})} required/>
+                              <input className="form-input" type="date" value={shiftForm.end_date} onChange={e=>setShiftForm({...shiftForm, end_date: e.target.value})} required/>
+                              <input className="form-input" type="number" placeholder="Лимит мест (по умолч. 30)" value={shiftForm.capacity} onChange={e=>setShiftForm({...shiftForm, capacity: e.target.value})}/>
+                          </div>
+                          <button className="btn btn-success">Добавить в систему</button>
+                      </form>
                   </div>
-              </div>
-              
-              <div className="table-responsive">
-                  <table className="modern-table">
-                      <thead>
-                          <tr>
-                              <th style={{textAlign: 'center'}}>ID</th>
-                              <th style={{textAlign: 'center'}}>Ребенок</th>
-                              <th style={{textAlign: 'center'}}>Смена / Друзья</th>
-                              <th style={{textAlign: 'center'}}>Статус</th>
-                              <th style={{textAlign: 'center'}}>Действия</th>
-                          </tr>
-                      </thead>
-                      <tbody>
-                          {apps.map(app => (
-                              <React.Fragment key={app.app_id}>
-                                  <tr style={{ background: app.is_blacklisted ? '#fff3f3' : '' }}>
-                                      <td style={{textAlign: 'center'}}><strong>{app.app_id}</strong></td>
+
+                  <div className="card">
+                      <div className="tab-header" style={{ marginBottom: '15px' }}>
+                          <h2 style={{margin: 0}}>База заявок</h2>
+                          <div className="actions">
+                              <button className="btn btn-success" onClick={handleExportExcel}>📥 Excel</button>
+                              <button className="btn btn-primary" onClick={() => setShowReport(true)}>📄 PDF Отчет</button>
+                          </div>
+                      </div>
+
+                      <div className="filters-container" style={{ display: 'flex', gap: '10px', marginBottom: '20px', flexWrap: 'wrap' }}>
+                          <input className="form-input" style={{ marginBottom: 0, flex: 1, minWidth: '200px' }} type="text" placeholder="🔍 Поиск по ФИО ребенка..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+                          <select className="form-input" style={{ marginBottom: 0, flex: 1, minWidth: '150px' }} value={shiftFilter} onChange={(e) => setShiftFilter(e.target.value)}>
+                              <option value="">Все смены</option>
+                              {uniqueShifts.map(sc => <option key={sc} value={sc}>{sc}</option>)}
+                          </select>
+                          <select className="form-input" style={{ marginBottom: 0, flex: 1, minWidth: '150px' }} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+                              <option value="">Все статусы</option>
+                              <option value="В работе">В работе</option>
+                              <option value="Одобрена">Одобрена</option>
+                              <option value="Оплачена">Оплачена</option>
+                              <option value="Отклонена">Отклонена</option>
+                          </select>
+                      </div>
+                      
+                      <div className="table-responsive">
+                          <table className="modern-table">
+                              <thead>
+                                  <tr>
+                                      <th style={{textAlign: 'center'}}>ID</th>
+                                      <th style={{textAlign: 'center'}}>Ребенок</th>
+                                      <th style={{textAlign: 'center'}}>Смена / Друзья</th>
+                                      <th style={{textAlign: 'center'}}>Статус</th>
+                                      <th style={{textAlign: 'center'}}>Действия</th>
+                                  </tr>
+                              </thead>
+                              <tbody>
+                                  {filteredApps.length === 0 ? (
+                                      <tr><td colSpan="5" style={{textAlign: 'center', padding: '20px', color: '#666'}}>По вашему запросу ничего не найдено.</td></tr>
+                                  ) : filteredApps.map(app => (
+                                      <React.Fragment key={app.app_id}>
+                                          <tr style={{ background: app.is_blacklisted ? '#fff3f3' : '' }}>
+                                              <td style={{textAlign: 'center'}}><strong>{app.app_id}</strong></td>
+                                              <td style={{textAlign: 'center'}}>
+                                                  <strong>{app.child_fio}</strong><br/>
+                                                  <span style={{ fontSize: '12px', color: '#666' }}>{formatSnils(app.snils)}</span>
+                                                  {app.is_blacklisted && <span style={{color:'var(--danger)', display:'block', fontSize:'12px', fontWeight:'bold'}}>[ЧС] {app.blacklist_reason}</span>}
+                                              </td>
+                                              <td style={{textAlign: 'center'}}>{app.shift_code} <br/><span style={{fontSize:'12px', color: '#666'}}>Друг: {app.friend_request || '-'}</span></td>
+                                              <td style={{textAlign: 'center'}}>
+                                                  <span className="badge" style={{ backgroundColor: getBadgeColor(app.status_name) }}>{app.status_name}</span>
+                                                  {app.payment_amount && <div style={{fontSize:'12px', marginTop:'5px', color:'var(--success)', fontWeight:'bold'}}>{app.payment_amount} ₽</div>}
+                                              </td>
+                                              <td style={{textAlign: 'center'}}>
+                                                  <div className="action-buttons" style={{justifyContent: 'center'}}>
+                                                      <button className="btn btn-sm btn-primary" onClick={() => toggleExpandInfo(app)}>
+                                                          {expandedApp === app.app_id ? 'Скрыть инфо' : 'ℹ️ Инфо'}
+                                                      </button>
+                                                      
+                                                      {app.status_name?.includes('работ') && (
+                                                          <>
+                                                              <button className="btn btn-sm btn-success" onClick={() => changeStatus(app.app_id, 2)}>✔</button>
+                                                              <button className="btn btn-sm btn-danger" onClick={() => { 
+                                                                  const r = prompt('Причина отклонения заявки:'); 
+                                                                  if(r) changeStatus(app.app_id, 3, r); 
+                                                              }}>✖</button>
+                                                          </>
+                                                      )}
+                                                      
+                                                      {app.is_blacklisted ? (
+                                                          <button className="btn btn-sm btn-secondary" onClick={() => toggleBlacklist(app.child_id, true)}>Из ЧС</button>
+                                                      ) : (
+                                                          blacklistingChildId === app.child_id ? (
+                                                              <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', marginTop: '5px' }}>
+                                                                  <input 
+                                                                      className="form-input" 
+                                                                      style={{ padding: '6px', marginBottom: '0', fontSize: '13px' }} 
+                                                                      type="text" 
+                                                                      placeholder="Причина (опционально)" 
+                                                                      value={blacklistReasonText} 
+                                                                      onChange={(e) => setBlacklistReasonText(e.target.value)} 
+                                                                  />
+                                                                  <div className="action-buttons" style={{ justifyContent: 'center' }}>
+                                                                      <button className="btn btn-sm btn-danger" onClick={() => toggleBlacklist(app.child_id, false, blacklistReasonText)}>Ок</button>
+                                                                      <button className="btn btn-sm btn-secondary" onClick={() => { setBlacklistingChildId(null); setBlacklistReasonText(''); }}>Отмена</button>
+                                                                  </div>
+                                                              </div>
+                                                          ) : (
+                                                              <button className="btn btn-sm btn-warning" onClick={() => { setBlacklistingChildId(app.child_id); setBlacklistReasonText(''); }}>В ЧС</button>
+                                                          )
+                                                      )}
+                                                  </div>
+                                              </td>
+                                          </tr>
+                                          {expandedApp === app.app_id && (
+                                              <tr style={{ backgroundColor: '#f8fafc' }}>
+                                                  <td colSpan="5" style={{ padding: '20px' }}>
+                                                      <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', textAlign: 'left' }}>
+                                                          <div style={{ flex: 1, minWidth: '250px' }}>
+                                                              <h4 style={{ color: 'var(--primary)', borderBottom: '2px solid #e2e8f0', paddingBottom: '8px' }}>👶 Данные ребенка</h4>
+                                                              <p><strong>Дата рождения:</strong> {new Date(app.birth_date).toLocaleDateString('ru-RU')}</p>
+                                                              <p><strong>СНИЛС:</strong> {formatSnils(app.snils)}</p>
+                                                              <p><strong>ОМС:</strong> {formatOms(app.oms)}</p>
+                                                              <p><strong>Адрес:</strong> {app.child_address || 'Нет данных'}</p>
+                                                              <p><strong>Доп. инфо:</strong> {app.additional_info || 'Нет данных'}</p>
+                                                          </div>
+                                                          <div style={{ flex: 1, minWidth: '250px' }}>
+                                                              <h4 style={{ color: 'var(--primary)', borderBottom: '2px solid #e2e8f0', paddingBottom: '8px' }}>👨‍👩‍👦 Заявитель</h4>
+                                                              <p><strong>ФИО:</strong> {app.parent_fio}</p>
+                                                              <p><strong>Телефон:</strong> {app.parent_phone || 'Не указан'}</p>
+                                                              <p><strong>Email:</strong> {app.parent_email}</p>
+                                                              <p><strong>Адрес:</strong> {app.parent_address || 'Не указан'}</p>
+                                                          </div>
+                                                          <div style={{ flex: 1, minWidth: '250px' }}>
+                                                              <h4 style={{ color: 'var(--primary)', borderBottom: '2px solid #e2e8f0', paddingBottom: '8px' }}>📎 Документы</h4>
+                                                              {childDocs.length > 0 ? (
+                                                                  <ul style={{ listStyleType: 'none', padding: 0, margin: 0 }}>
+                                                                      {childDocs.map(doc => (
+                                                                          <li key={doc.document_id} style={{ marginBottom: '8px' }}>
+                                                                              📄 <a href={`http://localhost:5000${doc.file_path}`} target="_blank" rel="noreferrer" style={{color: 'var(--primary)', fontWeight: 'bold', textDecoration: 'none'}}>{doc.document_type}</a>
+                                                                          </li>
+                                                                      ))}
+                                                                  </ul>
+                                                              ) : <p style={{color: '#666', fontSize: '14px'}}>Документы не загружены</p>}
+                                                          </div>
+                                                          
+                                                          {app.card_mask && (
+                                                              <div style={{ flex: 1, minWidth: '250px' }}>
+                                                                  <h4 style={{ color: 'var(--success)', borderBottom: '2px solid #dcfce7', paddingBottom: '8px' }}>💳 Данные об оплате</h4>
+                                                                  <p><strong>Сумма:</strong> {app.payment_amount} руб.</p>
+                                                                  <p><strong>Карта:</strong> {app.card_mask}</p>
+                                                                  <p><strong>Дата транзакции:</strong> {new Date(app.payment_date).toLocaleString('ru-RU')}</p>
+                                                              </div>
+                                                          )}
+                                                      </div>
+                                                  </td>
+                                              </tr>
+                                          )}
+                                      </React.Fragment>
+                                  ))}
+                              </tbody>
+                          </table>
+                      </div>
+                  </div>
+              </>
+          )}
+
+          {/* ВКЛАДКА: БАЗА ВСЕХ ДЕТЕЙ */}
+          {adminTab === 'children' && (
+              <div className="card">
+                  <div className="tab-header" style={{ marginBottom: '15px' }}>
+                      <h2 style={{margin: 0}}>База всех детей</h2>
+                  </div>
+                  
+                  <div className="filters-container" style={{ marginBottom: '20px' }}>
+                      <input 
+                          className="form-input" 
+                          style={{ marginBottom: 0, width: '100%', maxWidth: '400px' }} 
+                          type="text" 
+                          placeholder="🔍 Поиск по ФИО или СНИЛС..." 
+                          value={childSearch} 
+                          onChange={(e) => setChildSearch(e.target.value)} 
+                      />
+                  </div>
+
+                  <div className="table-responsive">
+                      <table className="modern-table">
+                          <thead>
+                              <tr>
+                                  <th style={{textAlign: 'center'}}>ID</th>
+                                  <th style={{textAlign: 'center'}}>Ребенок</th>
+                                  <th style={{textAlign: 'center'}}>Родитель</th>
+                                  <th style={{textAlign: 'center'}}>Статус</th>
+                                  <th style={{textAlign: 'center'}}>Действия (ЧС)</th>
+                              </tr>
+                          </thead>
+                          <tbody>
+                              {filteredChildren.length === 0 ? (
+                                  <tr><td colSpan="5" style={{textAlign: 'center', padding: '20px', color: '#666'}}>Дети не найдены.</td></tr>
+                              ) : filteredChildren.map(child => (
+                                  <tr key={child.child_id} style={{ background: child.is_blacklisted ? '#fff3f3' : '' }}>
+                                      <td style={{textAlign: 'center'}}><strong>{child.child_id}</strong></td>
                                       <td style={{textAlign: 'center'}}>
-                                          <strong>{app.child_fio}</strong><br/>
-                                          <span style={{ fontSize: '12px', color: '#666' }}>{formatSnils(app.snils)}</span>
-                                          {app.is_blacklisted && <span style={{color:'var(--danger)', display:'block', fontSize:'12px', fontWeight:'bold'}}>[ЧС] {app.blacklist_reason}</span>}
+                                          <strong>{child.child_fio}</strong><br/>
+                                          <span style={{ fontSize: '12px', color: '#666' }}>{formatSnils(child.snils)}</span>
+                                          {child.is_blacklisted && <span style={{color:'var(--danger)', display:'block', fontSize:'12px', fontWeight:'bold'}}>[ЧС] {child.blacklist_reason}</span>}
                                       </td>
-                                      <td style={{textAlign: 'center'}}>{app.shift_code} <br/><span style={{fontSize:'12px', color: '#666'}}>Друг: {app.friend_request || '-'}</span></td>
                                       <td style={{textAlign: 'center'}}>
-                                          <span className="badge" style={{ backgroundColor: getBadgeColor(app.status_name) }}>{app.status_name}</span>
-                                          {app.payment_amount && <div style={{fontSize:'12px', marginTop:'5px', color:'var(--success)', fontWeight:'bold'}}>{app.payment_amount} ₽</div>}
+                                          {child.parent_fio}<br/>
+                                          <span style={{ fontSize: '12px', color: '#666' }}>{formatPhone(child.parent_phone)}</span>
+                                      </td>
+                                      <td style={{textAlign: 'center'}}>
+                                          {child.is_blacklisted ? (
+                                              <span className="badge" style={{ backgroundColor: 'var(--danger)' }}>В ЧС</span>
+                                          ) : (
+                                              <span className="badge" style={{ backgroundColor: 'var(--success)' }}>Активен</span>
+                                          )}
                                       </td>
                                       <td style={{textAlign: 'center'}}>
                                           <div className="action-buttons" style={{justifyContent: 'center'}}>
-                                              <button className="btn btn-sm btn-primary" onClick={() => toggleExpandInfo(app)}>
-                                                  {expandedApp === app.app_id ? 'Скрыть инфо' : 'ℹ️ Инфо'}
-                                              </button>
-                                              
-                                              {app.status_name?.includes('работ') && (
-                                                  <>
-                                                      <button className="btn btn-sm btn-success" onClick={() => changeStatus(app.app_id, 2)}>✔</button>
-                                                      <button className="btn btn-sm btn-danger" onClick={() => { 
-                                                          // Единственный prompt, который мы оставили — для причины отказа по заявке
-                                                          const r = prompt('Причина отклонения заявки:'); 
-                                                          if(r) changeStatus(app.app_id, 3, r); 
-                                                      }}>✖</button>
-                                                  </>
-                                              )}
-                                              
-                                              {/* Умная инлайн кнопка ЧС */}
-                                              {app.is_blacklisted ? (
-                                                  <button className="btn btn-sm btn-secondary" onClick={() => toggleBlacklist(app.child_id, true)}>Из ЧС</button>
+                                              {child.is_blacklisted ? (
+                                                  <button className="btn btn-sm btn-secondary" onClick={() => toggleBlacklist(child.child_id, true)}>Из ЧС</button>
                                               ) : (
-                                                  blacklistingChildId === app.child_id ? (
+                                                  blacklistingChildId === child.child_id ? (
                                                       <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', marginTop: '5px' }}>
                                                           <input 
                                                               className="form-input" 
@@ -837,58 +1062,23 @@ function AdminDashboard({ fetchAPI, token, handleLogout }) {
                                                               onChange={(e) => setBlacklistReasonText(e.target.value)} 
                                                           />
                                                           <div className="action-buttons" style={{ justifyContent: 'center' }}>
-                                                              <button className="btn btn-sm btn-danger" onClick={() => toggleBlacklist(app.child_id, false, blacklistReasonText)}>Ок</button>
+                                                              <button className="btn btn-sm btn-danger" onClick={() => toggleBlacklist(child.child_id, false, blacklistReasonText)}>Ок</button>
                                                               <button className="btn btn-sm btn-secondary" onClick={() => { setBlacklistingChildId(null); setBlacklistReasonText(''); }}>Отмена</button>
                                                           </div>
                                                       </div>
                                                   ) : (
-                                                      <button className="btn btn-sm btn-warning" onClick={() => { setBlacklistingChildId(app.child_id); setBlacklistReasonText(''); }}>В ЧС</button>
+                                                      <button className="btn btn-sm btn-warning" onClick={() => { setBlacklistingChildId(child.child_id); setBlacklistReasonText(''); }}>В ЧС</button>
                                                   )
                                               )}
                                           </div>
                                       </td>
                                   </tr>
-                                  {expandedApp === app.app_id && (
-                                      <tr style={{ backgroundColor: '#f8fafc' }}>
-                                          <td colSpan="5" style={{ padding: '20px' }}>
-                                              <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', textAlign: 'left' }}>
-                                                  <div style={{ flex: 1, minWidth: '250px' }}>
-                                                      <h4 style={{ color: 'var(--primary)', borderBottom: '2px solid #e2e8f0', paddingBottom: '8px' }}>👶 Данные ребенка</h4>
-                                                      <p><strong>Дата рождения:</strong> {new Date(app.birth_date).toLocaleDateString('ru-RU')}</p>
-                                                      <p><strong>СНИЛС:</strong> {formatSnils(app.snils)}</p>
-                                                      <p><strong>ОМС:</strong> {formatOms(app.oms)}</p>
-                                                      <p><strong>Адрес:</strong> {app.child_address || 'Нет данных'}</p>
-                                                      <p><strong>Доп. инфо:</strong> {app.additional_info || 'Нет данных'}</p>
-                                                  </div>
-                                                  <div style={{ flex: 1, minWidth: '250px' }}>
-                                                      <h4 style={{ color: 'var(--primary)', borderBottom: '2px solid #e2e8f0', paddingBottom: '8px' }}>👨‍👩‍👦 Заявитель</h4>
-                                                      <p><strong>ФИО:</strong> {app.parent_fio}</p>
-                                                      <p><strong>Телефон:</strong> {app.parent_phone || 'Не указан'}</p>
-                                                      <p><strong>Email:</strong> {app.parent_email}</p>
-                                                      <p><strong>Адрес:</strong> {app.parent_address || 'Не указан'}</p>
-                                                  </div>
-                                                  <div style={{ flex: 1, minWidth: '250px' }}>
-                                                      <h4 style={{ color: 'var(--primary)', borderBottom: '2px solid #e2e8f0', paddingBottom: '8px' }}>📎 Документы</h4>
-                                                      {childDocs.length > 0 ? (
-                                                          <ul style={{ listStyleType: 'none', padding: 0, margin: 0 }}>
-                                                              {childDocs.map(doc => (
-                                                                  <li key={doc.document_id} style={{ marginBottom: '8px' }}>
-                                                                      📄 <a href={`http://localhost:5000${doc.file_path}`} target="_blank" rel="noreferrer" style={{color: 'var(--primary)', fontWeight: 'bold', textDecoration: 'none'}}>{doc.document_type}</a>
-                                                                  </li>
-                                                              ))}
-                                                          </ul>
-                                                      ) : <p style={{color: '#666', fontSize: '14px'}}>Документы не загружены</p>}
-                                                  </div>
-                                              </div>
-                                          </td>
-                                      </tr>
-                                  )}
-                              </React.Fragment>
-                          ))}
-                      </tbody>
-                  </table>
+                              ))}
+                          </tbody>
+                      </table>
+                  </div>
               </div>
-          </div>
+          )}
       </div>
   );
 }

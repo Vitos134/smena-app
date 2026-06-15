@@ -350,7 +350,6 @@ app.delete('/api/documents/:id', auth, async (req, res) => {
 // 5. ЗАЯВКИ РОДИТЕЛЯ
 // ==========================================
 
-// Подать новую заявку на смену 
 // Подать новую заявку на смену (Умная проверка мест, ЧС и ДОКУМЕНТОВ)
 app.post('/api/applications', auth, async (req, res) => {
     try {
@@ -420,7 +419,7 @@ app.get('/api/applications', auth, async (req, res) => {
     try {
         const apps = await pool.query(`
             SELECT 
-                a.app_id, c.fio, s.shift_code as code, a.price,
+                a.app_id, c.fio, s.shift_code as code, a.price, a.accommodation_type,
                 st.status_name, a.rejection_reason,
                 a.payment_amount as amount, a.card_mask, a.payment_date
             FROM applications a 
@@ -473,7 +472,7 @@ app.get('/api/admin/applications', auth, async (req, res) => {
                 c.birth_date, c.snils, c.oms, c.additional_info, c.address as child_address, 
                 c.is_blacklisted, c.blacklist_reason, u.email as parent_email, 
                 u.phone as parent_phone, u.fio as parent_fio, u.address as parent_address, 
-                s.shift_code, st.status_name, a.friend_request,
+                s.shift_code, st.status_name, a.friend_request, a.accommodation_type,
                 a.payment_amount, a.card_mask, a.payment_date
             FROM applications a 
             JOIN children c ON a.child_id = c.child_id 
@@ -485,6 +484,28 @@ app.get('/api/admin/applications', auth, async (req, res) => {
         res.json(apps.rows);
     } catch (err) {
         console.error('Ошибка сборки данных для админа:', err.message);
+        res.status(500).json({ error: 'Ошибка сервера' });
+    }
+});
+
+// НОВЫЙ МАРШРУТ: Получить базу АБСОЛЮТНО ВСЕХ ДЕТЕЙ для менеджера (даже без активных заявок)
+app.get('/api/admin/children', auth, async (req, res) => {
+    try {
+        if (req.user.role_id !== 2) return res.status(403).json({ error: 'Доступ запрещен.' });
+        
+        const children = await pool.query(`
+            SELECT 
+                c.child_id, c.fio as child_fio, c.birth_date, c.snils, c.oms, 
+                c.additional_info, c.address as child_address, 
+                c.is_blacklisted, c.blacklist_reason, 
+                u.fio as parent_fio, u.phone as parent_phone, u.email as parent_email 
+            FROM children c 
+            JOIN users u ON c.parent_id = u.user_id 
+            ORDER BY c.child_id DESC
+        `);
+        res.json(children.rows);
+    } catch (err) {
+        console.error('Ошибка сборки базы детей:', err.message);
         res.status(500).json({ error: 'Ошибка сервера' });
     }
 });
