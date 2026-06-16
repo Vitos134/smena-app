@@ -22,6 +22,9 @@ const app = express();
 app.use(cors()); 
 app.use(express.json()); 
 
+// РАЗДАЧА СТАТИКИ (Наш собранный React-сайт)
+app.use(express.static(path.join(__dirname, 'dist')));
+
 // Подключение к БД напрямую здесь (заменяет старый ./db.js)
 const pool = new Pool({
     user: process.env.DB_USER || 'postgres',
@@ -648,6 +651,11 @@ app.get('/api/admin/export/applications', auth, async (req, res) => {
         console.error('Ошибка выгрузки Excel:', err.message);
         res.status(500).json({ error: 'Ошибка сервера при выгрузке отчета' });
     }
+});
+
+// Любой неизвестный роут отправляем на наш React-сайт
+app.get(/.*/, (req, res) => {
+    res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
 // ==========================================
