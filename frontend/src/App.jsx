@@ -56,7 +56,8 @@ const ModalProvider = ({ children }) => {
 // ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ И МАСКИ
 // ==========================================
 const formatCardNumber = (value) => {
-    const digits = value.replace(/\D/g, ''); 
+    if (!value) return '';
+    const digits = String(value).replace(/\D/g, ''); 
     let formatted = '';
     for (let i = 0; i < digits.length; i += 4) {
         formatted += digits.substring(i, i + 4) + ' ';
@@ -65,13 +66,15 @@ const formatCardNumber = (value) => {
 };
 
 const formatExpiry = (value) => {
-    const digits = value.replace(/\D/g, '');
+    if (!value) return '';
+    const digits = String(value).replace(/\D/g, '');
     if (digits.length >= 2) return digits.substring(0, 2) + '/' + digits.substring(2, 4); 
     return digits;
 };
 
 const formatDate = (value) => {
-    const digits = value.replace(/\D/g, ''); 
+    if (!value) return '';
+    const digits = String(value).replace(/\D/g, ''); 
     let formatted = '';
     if (digits.length > 0) formatted += digits.substring(0, 2);
     if (digits.length > 2) formatted += '.' + digits.substring(2, 4);
@@ -81,7 +84,7 @@ const formatDate = (value) => {
 
 const formatSnils = (value) => {
     if (!value) return '';
-    const digits = value.toString().replace(/\D/g, ''); 
+    const digits = String(value).replace(/\D/g, ''); 
     let formatted = '';
     if (digits.length > 0) formatted += digits.substring(0, 3);
     if (digits.length > 3) formatted += '-' + digits.substring(3, 6);
@@ -92,7 +95,7 @@ const formatSnils = (value) => {
 
 const formatOms = (value) => {
     if (!value) return '';
-    const digits = value.toString().replace(/\D/g, ''); 
+    const digits = String(value).replace(/\D/g, ''); 
     let formatted = '';
     if (digits.length > 0) formatted += digits.substring(0, 4);
     if (digits.length > 4) formatted += ' ' + digits.substring(4, 8);
@@ -102,7 +105,8 @@ const formatOms = (value) => {
 };
 
 const formatPhone = (value) => {
-    const digits = value.replace(/\D/g, '');
+    if (!value) return '';
+    const digits = String(value).replace(/\D/g, '');
     if (!digits) return '';
     let formatted = '+7';
     if (digits.length > 1) formatted += ' (' + digits.substring(1, 4);
@@ -119,6 +123,21 @@ const getBadgeColor = (statusName) => {
     if (lowerName.includes('отклон')) return '#dc3545';
     return '#fd7e14';
 };
+
+// Функция для расчета точного возраста (для защиты дат)
+const calculateAge = (dateStr) => {
+    const today = new Date();
+    const birthDate = new Date(dateStr);
+    let age = today.getFullYear() - birthDate.getFullYear();
+    const m = today.getMonth() - birthDate.getMonth();
+    if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
+        age--;
+    }
+    return age;
+};
+
+// Получаем сегодняшнюю дату для ограничения инпутов смен
+const todayDateString = new Date().toISOString().split('T')[0];
 
 // ==========================================
 // ГЛАВНЫЙ КОМПОНЕНТ ПРИЛОЖЕНИЯ
@@ -346,10 +365,21 @@ function Children({ fetchAPI }) {
       const cleanSnils = form.snils.replace(/\D/g, ''); const cleanOms = form.oms.replace(/\D/g, '');
       if (cleanSnils.length !== 11) return showAlert('СНИЛС должен содержать 11 цифр!');
       if (cleanOms.length !== 16) return showAlert('ОМС должен содержать 16 цифр!');
-      if (form.birth_date.length !== 10) return showAlert('Дата рождения должна быть в формате ДД.ММ.ГГГГ');
+      if (!form.birth_date || form.birth_date.length !== 10) return showAlert('Дата рождения должна быть в формате ДД.ММ.ГГГГ');
+      
       const [day, month, year] = form.birth_date.split('.');
+      const isoDate = `${year}-${month}-${day}`;
+      
+      // ВАЛИДАЦИЯ ВОЗРАСТА: От 6 до 18 лет
+      const age = calculateAge(isoDate);
+      const d = new Date(isoDate);
+      if (isNaN(d.getTime())) return showAlert('Введена некорректная дата!');
+      if (age < 6 || age > 18) {
+          return showAlert('Ошибка! Возраст ребенка для поездки в лагерь должен быть от 6 до 18 лет.');
+      }
+
       try {
-          await fetchAPI('/children', { method: 'POST', body: JSON.stringify({ ...form, birth_date: `${year}-${month}-${day}`, snils: cleanSnils, oms: cleanOms }) });
+          await fetchAPI('/children', { method: 'POST', body: JSON.stringify({ ...form, birth_date: isoDate, snils: cleanSnils, oms: cleanOms }) });
           showAlert('Анкета добавлена!');
           setForm({ fio: '', birth_date: '', snils: '', oms: '', address: '', additional_info: '' });
           setShowAddForm(false);
@@ -360,10 +390,21 @@ function Children({ fetchAPI }) {
   const handleEdit = async (e, childId) => {
       e.preventDefault();
       const cleanSnils = editForm.snils.replace(/\D/g, ''); const cleanOms = editForm.oms.replace(/\D/g, '');
-      if (editForm.birth_date.length !== 10) return showAlert('Дата рождения должна быть в формате ДД.ММ.ГГГГ');
+      if (!editForm.birth_date || editForm.birth_date.length !== 10) return showAlert('Дата рождения должна быть в формате ДД.ММ.ГГГГ');
+      
       const [day, month, year] = editForm.birth_date.split('.');
+      const isoDate = `${year}-${month}-${day}`;
+      
+      // ВАЛИДАЦИЯ ВОЗРАСТА
+      const age = calculateAge(isoDate);
+      const d = new Date(isoDate);
+      if (isNaN(d.getTime())) return showAlert('Введена некорректная дата!');
+      if (age < 6 || age > 18) {
+          return showAlert('Ошибка! Возраст ребенка для поездки в лагерь должен быть от 6 до 18 лет.');
+      }
+
       try {
-          await fetchAPI(`/children/${childId}`, { method: 'PUT', body: JSON.stringify({ ...editForm, birth_date: `${year}-${month}-${day}`, snils: cleanSnils, oms: cleanOms }) });
+          await fetchAPI(`/children/${childId}`, { method: 'PUT', body: JSON.stringify({ ...editForm, birth_date: isoDate, snils: cleanSnils, oms: cleanOms }) });
           showAlert('Анкета обновлена!'); setEditingId(null); loadData();
       } catch (err) { showAlert(err.message); }
   };
@@ -463,7 +504,7 @@ function Children({ fetchAPI }) {
                               <p><strong>Дата рождения:</strong> {new Date(child.birth_date).toLocaleDateString('ru-RU')}</p>
                               <p><strong>СНИЛС:</strong> {formatSnils(child.snils)}</p>
                               <p><strong>Полис ОМС:</strong> {formatOms(child.oms)}</p>
-                              <p><strong>Адрес:</strong> {child.address}</p>
+                              <p><strong>Адрес:</strong> {child.address || 'Не указан'}</p>
                           </div>
 
                           <div style={{ marginTop: '15px', padding: '15px', backgroundColor: '#f8fafc', borderRadius: '10px' }}>
@@ -472,7 +513,7 @@ function Children({ fetchAPI }) {
                               <ul style={{ listStyleType: 'none', padding: 0 }}>
                                   {(documents[child.child_id] || []).map(doc => (
                                       <li key={doc.document_id} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px', background: '#fff', border: '1px solid #ddd', marginBottom: '5px', borderRadius: '6px' }}>
-                                          <a href={`http://localhost:5000${doc.file_path}`} target="_blank" rel="noreferrer" style={{color: 'var(--primary)', fontWeight: '600', textDecoration: 'none'}}>{doc.document_type}</a>
+                                          <a href={doc.file_path} target="_blank" rel="noreferrer" style={{color: 'var(--primary)', fontWeight: '600', textDecoration: 'none'}}>{doc.document_type}</a>
                                           <button className="btn btn-sm btn-danger" onClick={() => handleDeleteDoc(doc.document_id)}>✖</button>
                                       </li>
                                   ))}
@@ -646,7 +687,6 @@ function Applications({ fetchAPI }) {
                                 <span className="badge" style={{ backgroundColor: getBadgeColor(app.status_name) }}>{app.status_name}</span>
                                 {app.rejection_reason && <div style={{color:'var(--danger)', fontSize:'12px', marginTop:'5px'}}>Отказ: {app.rejection_reason}</div>}
                                 
-                                {/* Красивый чек родителя */}
                                 {app.card_mask && (
                                     <div style={{ color:'var(--success)', fontSize:'12px', marginTop:'8px', background: '#f8fafc', padding: '8px', borderRadius: '6px', border: '1px solid #dcfce7' }}>
                                         <strong>✅ Путевка оплачена</strong><br/>
@@ -683,17 +723,22 @@ function AdminDashboard({ fetchAPI, token, handleLogout }) {
   const [showReport, setShowReport] = useState(false);
   const [shiftForm, setShiftForm] = useState({ program_name: '', shift_code: '', start_date: '', end_date: '', capacity: '' });
   
+  const [editingShiftId, setEditingShiftId] = useState(null);
+  const [editShiftData, setEditShiftData] = useState({});
+
   const [expandedApp, setExpandedApp] = useState(null);
+  
+  // Состояние для отображения доп. информации о ребенке в Базе Детей
+  const [expandedChildId, setExpandedChildId] = useState(null);
+
   const [childDocs, setChildDocs] = useState([]);
   const [blacklistingChildId, setBlacklistingChildId] = useState(null);
   const [blacklistReasonText, setBlacklistReasonText] = useState('');
 
-  // Фильтры заявок
+  // Фильтры
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [shiftFilter, setShiftFilter] = useState('');
-  
-  // Фильтр детей
   const [childSearch, setChildSearch] = useState('');
 
   const { showConfirm, showAlert } = useModal();
@@ -763,11 +808,45 @@ function AdminDashboard({ fetchAPI, token, handleLogout }) {
       } catch (e) { showAlert(e.message); }
   };
 
+  // СОЗДАНИЕ СМЕНЫ: ЗАЩИТА ДАТ
   const handleAddShift = async (e) => {
       e.preventDefault();
+      if (shiftForm.start_date < todayDateString) return showAlert('Ошибка! Смена не может начинаться в прошлом времени.');
+      if (shiftForm.end_date <= shiftForm.start_date) return showAlert('Ошибка! Дата окончания смены должна быть позже даты начала.');
+
       try {
           await fetchAPI('/admin/shifts', { method: 'POST', body: JSON.stringify(shiftForm) });
           showAlert('Смена успешно создана!'); setShiftForm({ program_name: '', shift_code: '', start_date: '', end_date: '', capacity: '' }); loadData();
+      } catch (e) { showAlert(e.message); }
+  };
+
+  const handleDeleteShift = (id) => {
+      showConfirm(
+          'Удалить смену?',
+          'Все заявки родителей на эту смену также будут удалены! Это действие нельзя отменить.',
+          async () => {
+              try {
+                  await fetchAPI(`/admin/shifts/${id}`, { method: 'DELETE' });
+                  showAlert('Смена успешно удалена');
+                  loadData();
+              } catch (e) { showAlert(e.message); }
+          },
+          'Да, удалить', 'Отмена', true
+      );
+  };
+
+  // СОХРАНЕНИЕ ИЗМЕНЕННОЙ СМЕНЫ: ЗАЩИТА ДАТ
+  const handleSaveShift = async (id) => {
+      if (editShiftData.end_date <= editShiftData.start_date) return showAlert('Ошибка! Дата окончания смены должна быть позже даты начала.');
+
+      try {
+          await fetchAPI(`/admin/shifts/${id}`, {
+              method: 'PUT',
+              body: JSON.stringify(editShiftData)
+          });
+          showAlert('Смена успешно обновлена!');
+          setEditingShiftId(null);
+          loadData();
       } catch (e) { showAlert(e.message); }
   };
 
@@ -834,19 +913,79 @@ function AdminDashboard({ fetchAPI, token, handleLogout }) {
           {adminTab === 'apps' && (
               <>
                   <div className="card" style={{ marginBottom: '20px' }}>
-                      <h2>🌲 Создать смену</h2>
+                      <h2 style={{ marginBottom: '15px' }}>🌲 Создать смену</h2>
                       <form onSubmit={handleAddShift}>
                           <div className="form-row">
                               <input className="form-input" type="text" placeholder="Программа (например: IT-Смена)" value={shiftForm.program_name} onChange={e=>setShiftForm({...shiftForm, program_name: e.target.value})} required/>
                               <input className="form-input" type="text" placeholder="Код (например: ЛЕТО-01)" value={shiftForm.shift_code} onChange={e=>setShiftForm({...shiftForm, shift_code: e.target.value})} required/>
                           </div>
                           <div className="form-row">
-                              <input className="form-input" type="date" value={shiftForm.start_date} onChange={e=>setShiftForm({...shiftForm, start_date: e.target.value})} required/>
-                              <input className="form-input" type="date" value={shiftForm.end_date} onChange={e=>setShiftForm({...shiftForm, end_date: e.target.value})} required/>
+                              {/* Установлен min для выбора только будущих дат */}
+                              <input className="form-input" type="date" min={todayDateString} value={shiftForm.start_date} onChange={e=>setShiftForm({...shiftForm, start_date: e.target.value})} required/>
+                              <input className="form-input" type="date" min={shiftForm.start_date || todayDateString} value={shiftForm.end_date} onChange={e=>setShiftForm({...shiftForm, end_date: e.target.value})} required/>
                               <input className="form-input" type="number" placeholder="Лимит мест (по умолч. 30)" value={shiftForm.capacity} onChange={e=>setShiftForm({...shiftForm, capacity: e.target.value})}/>
                           </div>
                           <button className="btn btn-success">Добавить в систему</button>
                       </form>
+                  </div>
+
+                  {/* ТАБЛИЦА СМЕН */}
+                  <div className="card" style={{ marginBottom: '20px' }}>
+                      <h2 style={{ marginBottom: '15px' }}>📅 Управление сменами</h2>
+                      <div className="table-responsive">
+                          <table className="modern-table">
+                              <thead>
+                                  <tr>
+                                      <th style={{textAlign: 'center'}}>Программа</th>
+                                      <th style={{textAlign: 'center'}}>Код / Сезон</th>
+                                      <th style={{textAlign: 'center'}}>Даты проведения</th>
+                                      <th style={{textAlign: 'center'}}>Мест</th>
+                                      <th style={{textAlign: 'center'}}>Действия</th>
+                                  </tr>
+                              </thead>
+                              <tbody>
+                                  {shifts.length === 0 ? (
+                                      <tr><td colSpan="5" style={{textAlign: 'center', color: '#666'}}>Созданных смен пока нет.</td></tr>
+                                  ) : shifts.map(shift => (
+                                      <tr key={shift.shift_id}>
+                                          {editingShiftId === shift.shift_id ? (
+                                              <>
+                                                  <td><input className="form-input" style={{marginBottom:0}} value={editShiftData.program_name || ''} onChange={e => setEditShiftData({...editShiftData, program_name: e.target.value})} /></td>
+                                                  <td><input className="form-input" style={{marginBottom:0}} value={editShiftData.shift_code || ''} onChange={e => setEditShiftData({...editShiftData, shift_code: e.target.value})} /></td>
+                                                  <td>
+                                                      <input type="date" className="form-input" style={{marginBottom:'5px'}} value={editShiftData.start_date?.split('T')[0] || ''} onChange={e => setEditShiftData({...editShiftData, start_date: e.target.value})} />
+                                                      <input type="date" className="form-input" style={{marginBottom:0}} value={editShiftData.end_date?.split('T')[0] || ''} onChange={e => setEditShiftData({...editShiftData, end_date: e.target.value})} />
+                                                  </td>
+                                                  <td><input type="number" className="form-input" style={{marginBottom:0, width: '80px'}} value={editShiftData.capacity || ''} onChange={e => setEditShiftData({...editShiftData, capacity: e.target.value})} /></td>
+                                                  <td>
+                                                      <div className="action-buttons" style={{flexDirection: 'column', gap: '5px'}}>
+                                                          <button className="btn btn-sm btn-success" onClick={() => handleSaveShift(shift.shift_id)}>Сохранить</button>
+                                                          <button className="btn btn-sm btn-secondary" onClick={() => setEditingShiftId(null)}>Отмена</button>
+                                                      </div>
+                                                  </td>
+                                              </>
+                                          ) : (
+                                              <>
+                                                  <td style={{textAlign: 'center'}}><strong>{shift.program_name}</strong></td>
+                                                  <td style={{textAlign: 'center'}}>{shift.shift_code}</td>
+                                                  <td style={{textAlign: 'center'}}>{new Date(shift.start_date).toLocaleDateString('ru-RU')} - {new Date(shift.end_date).toLocaleDateString('ru-RU')}</td>
+                                                  <td style={{textAlign: 'center'}}>{shift.capacity}</td>
+                                                  <td style={{textAlign: 'center'}}>
+                                                      <div className="action-buttons" style={{justifyContent: 'center'}}>
+                                                          <button className="btn btn-sm btn-warning" onClick={() => {
+                                                              setEditingShiftId(shift.shift_id);
+                                                              setEditShiftData(shift);
+                                                          }}>✎ Ред.</button>
+                                                          <button className="btn btn-sm btn-danger" onClick={() => handleDeleteShift(shift.shift_id)}>✖</button>
+                                                      </div>
+                                                  </td>
+                                              </>
+                                          )}
+                                      </tr>
+                                  ))}
+                              </tbody>
+                          </table>
+                      </div>
                   </div>
 
                   <div className="card">
@@ -957,7 +1096,7 @@ function AdminDashboard({ fetchAPI, token, handleLogout }) {
                                                           <div style={{ flex: 1, minWidth: '250px' }}>
                                                               <h4 style={{ color: 'var(--primary)', borderBottom: '2px solid #e2e8f0', paddingBottom: '8px' }}>👨‍👩‍👦 Заявитель</h4>
                                                               <p><strong>ФИО:</strong> {app.parent_fio}</p>
-                                                              <p><strong>Телефон:</strong> {app.parent_phone || 'Не указан'}</p>
+                                                              <p><strong>Телефон:</strong> {formatPhone(app.parent_phone) || 'Не указан'}</p>
                                                               <p><strong>Email:</strong> {app.parent_email}</p>
                                                               <p><strong>Адрес:</strong> {app.parent_address || 'Не указан'}</p>
                                                           </div>
@@ -967,7 +1106,7 @@ function AdminDashboard({ fetchAPI, token, handleLogout }) {
                                                                   <ul style={{ listStyleType: 'none', padding: 0, margin: 0 }}>
                                                                       {childDocs.map(doc => (
                                                                           <li key={doc.document_id} style={{ marginBottom: '8px' }}>
-                                                                              📄 <a href={`http://localhost:5000${doc.file_path}`} target="_blank" rel="noreferrer" style={{color: 'var(--primary)', fontWeight: 'bold', textDecoration: 'none'}}>{doc.document_type}</a>
+                                                                              <a href={doc.file_path} target="_blank" rel="noreferrer" style={{color: 'var(--primary)', fontWeight: 'bold', textDecoration: 'none'}}>{doc.document_type}</a>
                                                                           </li>
                                                                       ))}
                                                                   </ul>
@@ -1028,51 +1167,81 @@ function AdminDashboard({ fetchAPI, token, handleLogout }) {
                               {filteredChildren.length === 0 ? (
                                   <tr><td colSpan="5" style={{textAlign: 'center', padding: '20px', color: '#666'}}>Дети не найдены.</td></tr>
                               ) : filteredChildren.map(child => (
-                                  <tr key={child.child_id} style={{ background: child.is_blacklisted ? '#fff3f3' : '' }}>
-                                      <td style={{textAlign: 'center'}}><strong>{child.child_id}</strong></td>
-                                      <td style={{textAlign: 'center'}}>
-                                          <strong>{child.child_fio}</strong><br/>
-                                          <span style={{ fontSize: '12px', color: '#666' }}>{formatSnils(child.snils)}</span>
-                                          {child.is_blacklisted && <span style={{color:'var(--danger)', display:'block', fontSize:'12px', fontWeight:'bold'}}>[ЧС] {child.blacklist_reason}</span>}
-                                      </td>
-                                      <td style={{textAlign: 'center'}}>
-                                          {child.parent_fio}<br/>
-                                          <span style={{ fontSize: '12px', color: '#666' }}>{formatPhone(child.parent_phone)}</span>
-                                      </td>
-                                      <td style={{textAlign: 'center'}}>
-                                          {child.is_blacklisted ? (
-                                              <span className="badge" style={{ backgroundColor: 'var(--danger)' }}>В ЧС</span>
-                                          ) : (
-                                              <span className="badge" style={{ backgroundColor: 'var(--success)' }}>Активен</span>
-                                          )}
-                                      </td>
-                                      <td style={{textAlign: 'center'}}>
-                                          <div className="action-buttons" style={{justifyContent: 'center'}}>
+                                  <React.Fragment key={child.child_id}>
+                                      <tr style={{ background: child.is_blacklisted ? '#fff3f3' : '' }}>
+                                          <td style={{textAlign: 'center'}}><strong>{child.child_id}</strong></td>
+                                          <td style={{textAlign: 'center'}}>
+                                              <strong>{child.child_fio}</strong><br/>
+                                              <span style={{ fontSize: '12px', color: '#666' }}>{formatSnils(child.snils)}</span>
+                                              {child.is_blacklisted && <span style={{color:'var(--danger)', display:'block', fontSize:'12px', fontWeight:'bold'}}>[ЧС] {child.blacklist_reason}</span>}
+                                          </td>
+                                          <td style={{textAlign: 'center'}}>
+                                              {child.parent_fio}<br/>
+                                              <span style={{ fontSize: '12px', color: '#666' }}>{formatPhone(child.parent_phone)}</span>
+                                          </td>
+                                          <td style={{textAlign: 'center'}}>
                                               {child.is_blacklisted ? (
-                                                  <button className="btn btn-sm btn-secondary" onClick={() => toggleBlacklist(child.child_id, true)}>Из ЧС</button>
+                                                  <span className="badge" style={{ backgroundColor: 'var(--danger)' }}>В ЧС</span>
                                               ) : (
-                                                  blacklistingChildId === child.child_id ? (
-                                                      <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', marginTop: '5px' }}>
-                                                          <input 
-                                                              className="form-input" 
-                                                              style={{ padding: '6px', marginBottom: '0', fontSize: '13px' }} 
-                                                              type="text" 
-                                                              placeholder="Причина (опционально)" 
-                                                              value={blacklistReasonText} 
-                                                              onChange={(e) => setBlacklistReasonText(e.target.value)} 
-                                                          />
-                                                          <div className="action-buttons" style={{ justifyContent: 'center' }}>
-                                                              <button className="btn btn-sm btn-danger" onClick={() => toggleBlacklist(child.child_id, false, blacklistReasonText)}>Ок</button>
-                                                              <button className="btn btn-sm btn-secondary" onClick={() => { setBlacklistingChildId(null); setBlacklistReasonText(''); }}>Отмена</button>
-                                                          </div>
-                                                      </div>
-                                                  ) : (
-                                                      <button className="btn btn-sm btn-warning" onClick={() => { setBlacklistingChildId(child.child_id); setBlacklistReasonText(''); }}>В ЧС</button>
-                                                  )
+                                                  <span className="badge" style={{ backgroundColor: 'var(--success)' }}>Активен</span>
                                               )}
-                                          </div>
-                                      </td>
-                                  </tr>
+                                          </td>
+                                          <td style={{textAlign: 'center'}}>
+                                              <div className="action-buttons" style={{justifyContent: 'center'}}>
+                                                  {/* КНОПКА ПОКАЗА ДЕТАЛЬНОЙ ИНФОРМАЦИИ */}
+                                                  <button className="btn btn-sm btn-primary" onClick={() => setExpandedChildId(expandedChildId === child.child_id ? null : child.child_id)}>
+                                                      {expandedChildId === child.child_id ? 'Скрыть инфо' : 'ℹ️ Инфо'}
+                                                  </button>
+                                                  
+                                                  {child.is_blacklisted ? (
+                                                      <button className="btn btn-sm btn-secondary" onClick={() => toggleBlacklist(child.child_id, true)}>Из ЧС</button>
+                                                  ) : (
+                                                      blacklistingChildId === child.child_id ? (
+                                                          <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', marginTop: '5px' }}>
+                                                              <input 
+                                                                  className="form-input" 
+                                                                  style={{ padding: '6px', marginBottom: '0', fontSize: '13px' }} 
+                                                                  type="text" 
+                                                                  placeholder="Причина (опционально)" 
+                                                                  value={blacklistReasonText} 
+                                                                  onChange={(e) => setBlacklistReasonText(e.target.value)} 
+                                                              />
+                                                              <div className="action-buttons" style={{ justifyContent: 'center' }}>
+                                                                  <button className="btn btn-sm btn-danger" onClick={() => toggleBlacklist(child.child_id, false, blacklistReasonText)}>Ок</button>
+                                                                  <button className="btn btn-sm btn-secondary" onClick={() => { setBlacklistingChildId(null); setBlacklistReasonText(''); }}>Отмена</button>
+                                                              </div>
+                                                          </div>
+                                                      ) : (
+                                                          <button className="btn btn-sm btn-warning" onClick={() => { setBlacklistingChildId(child.child_id); setBlacklistReasonText(''); }}>В ЧС</button>
+                                                      )
+                                                  )}
+                                              </div>
+                                          </td>
+                                      </tr>
+                                      {/* РАСКРЫВАЮЩИЙСЯ БЛОК ДЛЯ АНКЕТЫ РЕБЕНКА */}
+                                      {expandedChildId === child.child_id && (
+                                          <tr style={{ backgroundColor: '#f8fafc' }}>
+                                              <td colSpan="5" style={{ padding: '20px' }}>
+                                                  <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', textAlign: 'left' }}>
+                                                      <div style={{ flex: 1, minWidth: '250px' }}>
+                                                          <h4 style={{ color: 'var(--primary)', borderBottom: '2px solid #e2e8f0', paddingBottom: '8px' }}>👶 Полные данные ребенка</h4>
+                                                          <p><strong>Дата рождения:</strong> {new Date(child.birth_date).toLocaleDateString('ru-RU')}</p>
+                                                          <p><strong>СНИЛС:</strong> {formatSnils(child.snils)}</p>
+                                                          <p><strong>ОМС:</strong> {formatOms(child.oms)}</p>
+                                                          <p><strong>Адрес:</strong> {child.child_address || 'Не указан'}</p>
+                                                          <p><strong>Доп. инфо:</strong> {child.additional_info || 'Отсутствует'}</p>
+                                                      </div>
+                                                      <div style={{ flex: 1, minWidth: '250px' }}>
+                                                          <h4 style={{ color: 'var(--primary)', borderBottom: '2px solid #e2e8f0', paddingBottom: '8px' }}>👨‍👩‍👦 Контакты родителя</h4>
+                                                          <p><strong>ФИО:</strong> {child.parent_fio}</p>
+                                                          <p><strong>Телефон:</strong> {formatPhone(child.parent_phone) || 'Не указан'}</p>
+                                                          <p><strong>Email:</strong> {child.parent_email}</p>
+                                                      </div>
+                                                  </div>
+                                              </td>
+                                          </tr>
+                                      )}
+                                  </React.Fragment>
                               ))}
                           </tbody>
                       </table>

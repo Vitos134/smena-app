@@ -22,7 +22,10 @@ const app = express();
 app.use(cors()); 
 app.use(express.json()); 
 
-// Подключение к БД напрямую здесь (заменяет старый ./db.js)
+// РАЗДАЧА СТАТИКИ (Наш собранный React-сайт) - ИСПРАВЛЕНИЕ №2
+app.use(express.static(path.join(__dirname, 'dist')));
+
+// Подключение к БД напрямую
 const pool = new Pool({
     user: process.env.DB_USER || 'postgres',
     host: process.env.DB_HOST || 'localhost',
@@ -39,17 +42,20 @@ if (!fs.existsSync(uploadDir)) {
 app.use('/uploads', express.static(uploadDir)); 
 
 const storage = multer.diskStorage({
-    destination: function (req, file, cb) {
-        cb(null, uploadDir);
+    destination: (req, file, cb) => {
+        cb(null, uploadDir); 
     },
-    filename: function (req, file, cb) {
-        // Защита от кириллицы в названиях файлов
-        cb(null, Date.now() + '-' + Buffer.from(file.originalname, 'latin1').toString('utf8'));
+    filename: (req, file, cb) => {
+        // Убираем все пробелы и заменяем их на нижнее подчеркивание
+        const safeName = file.originalname.replace(/\s+/g, '_');
+        cb(null, Date.now() + '-' + safeName);
     }
 });
+
+// ИСПРАВЛЕНИЕ №1: Создаем переменную upload, которая использует наш storage
 const upload = multer({ storage: storage });
 
-// Наша прослойка авторизации (заменяет старый ./auth.js)
+// Наша прослойка авторизации
 const auth = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
@@ -213,7 +219,7 @@ app.get('/api/children', auth, async (req, res) => {
     }
 });
 
-// Добавить новую анкету ребенка (С автоматическим "подсасыванием" адреса)
+// Добавить новую анкету ребенка
 app.post('/api/children', auth, async (req, res) => {
     try {
         let { fio, birth_date, snils, oms, additional_info, address } = req.body;
@@ -267,7 +273,7 @@ app.put('/api/children/:id', auth, async (req, res) => {
     }
 });
 
-// Удалить анкету ребенка (Каскадно чистит документы и заявки)
+// Удалить анкету ребенка
 app.delete('/api/children/:id', auth, async (req, res) => {
     try {
         const { id } = req.params;
@@ -324,7 +330,7 @@ app.get('/api/documents/:childId', auth, async (req, res) => {
     }
 });
 
-// Удалить документ (Чистит и запись в БД, и физический файл с жесткого диска)
+// Удалить документ 
 app.delete('/api/documents/:id', auth, async (req, res) => {
     try {
         const { id } = req.params;
@@ -350,7 +356,7 @@ app.delete('/api/documents/:id', auth, async (req, res) => {
 // 5. ЗАЯВКИ РОДИТЕЛЯ
 // ==========================================
 
-// Подать новую заявку на смену (Умная проверка мест, ЧС и ДОКУМЕНТОВ)
+// Подать новую заявку на смену 
 app.post('/api/applications', auth, async (req, res) => {
     try {
         const { child_id, shift_id, season, accommodation_type, shift_number, friend_request } = req.body;
@@ -373,7 +379,6 @@ app.post('/api/applications', auth, async (req, res) => {
         const uploadedTypes = docsCheck.rows.map(d => d.document_type);
         const requiredTypes = ['Свидетельство о рождении', 'Полис ОМС', 'Мед. справка 079/у'];
         
-        // Ищем, каких обязательных документов не хватает
         const missingDocs = requiredTypes.filter(type => !uploadedTypes.includes(type));
 
         if (missingDocs.length > 0) {
@@ -461,7 +466,7 @@ app.delete('/api/applications/:id', auth, async (req, res) => {
 // 6. АДМИН-ПАНЕЛЬ (ТОЛЬКО ДЛЯ МЕНЕДЖЕРОВ)
 // ==========================================
 
-// Получить абсолютно все заявки в системе для панели менеджера
+// Получить абсолютно все заявки в системе 
 app.get('/api/admin/applications', auth, async (req, res) => {
     try {
         if (req.user.role_id !== 2) return res.status(403).json({ error: 'Доступ запрещен.' });
@@ -488,7 +493,7 @@ app.get('/api/admin/applications', auth, async (req, res) => {
     }
 });
 
-// НОВЫЙ МАРШРУТ: Получить базу АБСОЛЮТНО ВСЕХ ДЕТЕЙ для менеджера (даже без активных заявок)
+// Получить базу АБСОЛЮТНО ВСЕХ ДЕТЕЙ
 app.get('/api/admin/children', auth, async (req, res) => {
     try {
         if (req.user.role_id !== 2) return res.status(403).json({ error: 'Доступ запрещен.' });
@@ -510,7 +515,7 @@ app.get('/api/admin/children', auth, async (req, res) => {
     }
 });
 
-// Изменить статус заявки (Одобрить / Отклонить с указанием причины)
+// Изменить статус заявки 
 app.put('/api/admin/applications/:id/status', auth, async (req, res) => {
     try {
         if (req.user.role_id !== 2) return res.status(403).json({ error: 'Доступ запрещен.' });
@@ -527,7 +532,7 @@ app.put('/api/admin/applications/:id/status', auth, async (req, res) => {
     }
 });
 
-// Управление Черным Списком детей (Блокировка / Разблокировка)
+// Управление Черным Списком
 app.put('/api/admin/children/:id/blacklist', auth, async (req, res) => {
     try {
         if (req.user.role_id !== 2) return res.status(403).json({ error: 'Доступ запрещен.' });
@@ -544,7 +549,7 @@ app.put('/api/admin/children/:id/blacklist', auth, async (req, res) => {
     }
 });
 
-// Добавление новой смены менеджером (С возможностью указать лимит мест capacity)
+// Добавление новой смены менеджером
 app.post('/api/admin/shifts', async (req, res) => {
     try {
         const { program_name, shift_code, start_date, end_date, capacity } = req.body;
@@ -553,7 +558,7 @@ app.post('/api/admin/shifts', async (req, res) => {
             return res.status(400).json({ error: 'Пожалуйста, заполните все обязательные поля!' });
         }
 
-        const finalCapacity = capacity ? parseInt(capacity) : 30; // 30 мест по умолчанию, если не указано
+        const finalCapacity = capacity ? parseInt(capacity) : 30; // 30 мест по умолчанию
 
         const result = await pool.query(
             'INSERT INTO shifts (program_name, shift_code, start_date, end_date, capacity) VALUES ($1, $2, $3, $4, $5) RETURNING *',
@@ -566,6 +571,32 @@ app.post('/api/admin/shifts', async (req, res) => {
     }
 });
 
+// --- РЕДАКТИРОВАНИЕ СМЕНЫ ---
+app.put('/api/admin/shifts/:id', async (req, res) => {
+    try {
+        const { program_name, shift_code, start_date, end_date, capacity } = req.body;
+        const result = await pool.query(
+            'UPDATE shifts SET program_name = $1, shift_code = $2, start_date = $3, end_date = $4, capacity = $5 WHERE shift_id = $6 RETURNING *',
+            [program_name, shift_code, start_date, end_date, capacity || 30, req.params.id]
+        );
+        res.json(result.rows[0]);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Ошибка сервера при обновлении смены' });
+    }
+});
+
+// --- УДАЛЕНИЕ СМЕНЫ ---
+app.delete('/api/admin/shifts/:id', async (req, res) => {
+    try {
+        await pool.query('DELETE FROM shifts WHERE shift_id = $1', [req.params.id]);
+        res.json({ message: 'Смена успешно удалена' });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Ошибка сервера при удалении смены' });
+    }
+});
+
 // ==========================================
 // 7. СИСТЕМА ОПЛАТЫ (ЭКВАЙРИНГ)
 // ==========================================
@@ -574,7 +605,6 @@ app.post('/api/payments', auth, async (req, res) => {
         const { application_id, amount, card_number } = req.body;
         const cardMask = '**** **** **** ' + card_number.slice(-4);
 
-        // Обновляем заявку напрямую и записываем чек, так как отдельная таблица удалена ради удобства
         await pool.query(
             'UPDATE applications SET status_id = 4, payment_amount = $1, card_mask = $2, payment_date = NOW() WHERE app_id = $3',
             [amount, cardMask, application_id]
@@ -645,9 +675,14 @@ app.get('/api/admin/export/applications', auth, async (req, res) => {
         await workbook.xlsx.write(res);
         res.end();
     } catch (err) {
-        console.error('Ошибка выгрузки Excel:', err.message);
+        console.error('Ошибка выЧто рузки Excel:', err.message);
         res.status(500).json({ error: 'Ошибка сервера при выгрузке отчета' });
     }
+});
+
+// ИСПРАВЛЕНИЕ №2: Перехватчик для React-роутинга (Должен быть в самом конце!)
+app.get(/.*/, (req, res) => {
+    res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
 // ==========================================
